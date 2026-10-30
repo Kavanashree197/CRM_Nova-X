@@ -1,0 +1,84 @@
+// CaseFlow CRM — Prisma schema (SQLite, mirrors the Flask/MySQL schema one-to-one)
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           Int       @id @default(autoincrement())
+  email        String    @unique
+  name         String
+  passwordHash String
+  role         String    @default("Resource") // Admin | Team Lead | Resource
+  active       Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+
+  casesCreated    Case[]           @relation("CaseCreatedBy")
+  casesAssigned   Case[]           @relation("CaseAssignedTo")
+  actions         CaseAction[]
+  assignmentsBy   CaseAssignment[] @relation("AssignmentBy")
+  assignmentsTo   CaseAssignment[] @relation("AssignmentTo")
+}
+
+model Case {
+  id              Int       @id @default(autoincrement())
+  caseCode        String    @unique
+  title           String
+  category        String
+  description     String?
+  priority        String    @default("Medium") // Low | Medium | High | Critical
+  status          String    @default("New")     // New | Active | Pending | Completed | Reopened
+  createdById     Int
+  createdBy       User      @relation("CaseCreatedBy", fields: [createdById], references: [id])
+  assignedToId    Int?
+  assignedTo      User?     @relation("CaseAssignedTo", fields: [assignedToId], references: [id])
+  dueDate        DateTime?
+  nextActionDate DateTime?
+  nextAction     String?
+  completionDate DateTime?
+  resolutionNote String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  assignments CaseAssignment[]
+  actions     CaseAction[]
+
+  @@index([status])
+  @@index([assignedToId])
+  @@index([dueDate])
+}
+
+model CaseAssignment {
+  id           Int      @id @default(autoincrement())
+  caseId       Int
+  case         Case     @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  assignedToId Int
+  assignedTo   User     @relation("AssignmentTo", fields: [assignedToId], references: [id])
+  assignedById Int
+  assignedBy   User     @relation("AssignmentBy", fields: [assignedById], references: [id])
+  note         String?
+  assignedAt   DateTime @default(now())
+
+  @@index([caseId])
+}
+
+model CaseAction {
+  id            Int      @id @default(autoincrement())
+  caseId        Int
+  case          Case     @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  userId        Int
+  user          User     @relation(fields: [userId], references: [id])
+  actionType    String
+  description   String
+  previousValue String?
+  newValue      String?
+  createdAt     DateTime @default(now())
+
+  @@index([caseId])
+  @@index([userId])
+  @@index([createdAt])
+}
