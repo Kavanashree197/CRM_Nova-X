@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { apiGet, apiPut, apiPost } from '../api'
 import { useAuth } from '../auth'
 import { useToast } from './Layout'
-import { StatusBadge, PriorityBadge } from './Badge'
+import { StatusBadge, PriorityBadge, ComplexityBadge } from './Badge'
 import { Loading, EmptyState } from './Feedback'
 import { IconClose, IconCheck, IconRefresh } from './icons'
 
@@ -113,6 +113,9 @@ function Overview({ c, assignments }) {
         <dt>Next action</dt><dd>{c.next_action || '—'}</dd>
         <dt>Next action date</dt><dd className="mono">{c.next_action_date || '—'}</dd>
         <dt>Completion date</dt><dd className="mono">{c.completion_date || '—'}</dd>
+        <dt>Closed by</dt><dd>{c.closed_by_name || '—'} {c.closed_by_user_id && c.assigned_to && c.closed_by_user_id !== c.assigned_to && <span className="text-xs muted">(differs from assignee)</span>}</dd>
+        <dt>Closed at</dt><dd className="mono">{c.closed_at ? fmt(c.closed_at) : '—'}</dd>
+        <dt>Complexity</dt><dd><ComplexityBadge complexity={c.complexity} /></dd>
         <dt>Created</dt><dd className="mono">{fmt(c.created_at)}</dd>
         <dt>Last updated</dt><dd className="mono">{fmt(c.updated_at)}</dd>
       </dl>

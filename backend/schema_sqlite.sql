@@ -31,11 +31,22 @@ CREATE TABLE IF NOT EXISTS cases (
     next_action       TEXT,
     completion_date   TEXT,
     resolution_note   TEXT,
+    -- Closure attribution (PS-02): the authenticated user who actually closed
+    -- the case + when. Distinct from assigned_to — the closer may differ from
+    -- the assignee (e.g. a Team Lead or Admin closes on behalf of a resource).
+    closed_by_user_id INTEGER REFERENCES users(user_id),
+    closed_at         TEXT,
+    -- Case complexity: Low / Medium / High, or NULL = "Not assessed".
+    -- Derived from the case's category (category.complexity) at closure time
+    -- so dashboards show a consistent value across roles.
+    complexity        TEXT CHECK (complexity IS NULL OR complexity IN ('Low','Medium','High')),
     created_at        TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at        TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_cases_status   ON cases(status);
 CREATE INDEX IF NOT EXISTS idx_cases_assignee ON cases(assigned_to);
+CREATE INDEX IF NOT EXISTS idx_cases_closed_by ON cases(closed_by_user_id);
+CREATE INDEX IF NOT EXISTS idx_cases_complexity ON cases(complexity);
 CREATE INDEX IF NOT EXISTS idx_cases_due      ON cases(due_date);
 
 CREATE TABLE IF NOT EXISTS case_assignments (
@@ -89,6 +100,9 @@ CREATE TABLE IF NOT EXISTS categories (
     name             TEXT NOT NULL UNIQUE,
     description      TEXT,
     default_priority TEXT NOT NULL DEFAULT 'Medium' CHECK (default_priority IN ('Low','Medium','High','Critical')),
+    -- Baseline complexity for cases of this category: Low/Medium/High.
+    -- Copied onto the case row at closure time so dashboards show one value.
+    complexity       TEXT CHECK (complexity IS NULL OR complexity IN ('Low','Medium','High')),
     created_at       TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

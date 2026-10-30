@@ -48,10 +48,12 @@ def _case_row(case_id):
         """SELECT c.*,
                   uc.name AS created_by_name,
                   ua.name AS assigned_to_name,
-                  ua.email AS assigned_to_email
+                  ua.email AS assigned_to_email,
+                  ucl.name AS closed_by_name
            FROM cases c
            LEFT JOIN users uc ON uc.user_id = c.created_by
            LEFT JOIN users ua ON ua.user_id = c.assigned_to
+           LEFT JOIN users ucl ON ucl.user_id = c.closed_by_user_id
            WHERE c.case_id = %s""",
         (case_id,),
     )
@@ -331,10 +333,22 @@ def update_case(case_id):
                 if not resolution_note:
                     return jsonify({"error":
                         "A resolution note is required to mark a case Completed"}), 400
+                # Closure attribution: record the AUTHENTICATED user who actually
+                # closed the case (from the JWT, never from the request body) +
+                # the timestamp + the category's baseline complexity (so
+                # dashboards show one consistent value across roles).
+                cat_row = db.fetch_one(
+                    "SELECT complexity FROM categories WHERE name=%s", (case["category"],))
+                complexity = cat_row["complexity"] if cat_row else None
+                # closed_at: backend-generated timestamp (portable expression).
+                closed_at_expr = "datetime('now')" if db.config.DB_TYPE == "sqlite" else "CURRENT_TIMESTAMP"
                 db.execute(
-                    """UPDATE cases SET status=%s, completion_date=%s,
-                       resolution_note=%s WHERE case_id=%s""",
-                    (new, date.today().isoformat(), resolution_note, case_id))
+                    f"""UPDATE cases SET status=%s, completion_date=%s,
+                       resolution_note=%s, closed_by_user_id=%s,
+                       closed_at={closed_at_expr}, complexity=%s
+                       WHERE case_id=%s""",
+                    (new, date.today().isoformat(), resolution_note,
+                     user["user_id"], complexity, case_id))
                 activity.log_action(case_id, user["user_id"], "resolution_submitted",
                                     f"Resolution note submitted. Case closed.",
                                     old, new)
@@ -342,27 +356,33 @@ def update_case(case_id):
                                     f"Status changed from {old} to {new}.",
                                     old, new)
                 audit.log_status_history(case_id, old, new, user["user_id"],
-                                         f"Resolved: {resolution_note[:120]}")
+                                         f"Resolved by {user['name']}: {resolution_note[:120]}")
                 audit.log_audit("case", case_id, "status_changed", user["user_id"],
-                                f"Status changed from {old} to {new} (resolved).",
+                                f"Status changed from {old} to {new} (resolved by {user['name']}).",
                                 {"from": old, "to": new})
-                audit.log_audit("case", case_id, "completion", user["user_id"],
-                                f"Case completed with resolution note.",
-                                {"resolution_note": resolution_note[:200]})
+                audit.log_audit("case", case_id, "case_closed", user["user_id"],
+                                f"Case closed by {user['name']} (assigned to "
+                                f"{case.get('assigned_to_name') or 'Unassigned'}).",
+                                {"closed_by": user["user_id"],
+                                 "assigned_to": case.get("assigned_to"),
+                                 "complexity": complexity})
             elif new == "Reopened":
                 # Reopening preserves prior completion history (we don't wipe
                 # completion_date/resolution_note - they remain visible in the
-                # history log). We just clear completion_date on the case row.
+                # history log). We clear closure attribution on the case row
+                # because the case is no longer closed; the prior closure
+                # remains in case_status_history + audit_logs.
                 db.execute(
-                    "UPDATE cases SET status=%s, completion_date=NULL WHERE case_id=%s",
+                    """UPDATE cases SET status=%s, completion_date=NULL,
+                       closed_by_user_id=NULL, closed_at=NULL WHERE case_id=%s""",
                     (new, case_id))
                 activity.log_action(case_id, user["user_id"], "case_reopened",
                                     f"Case reopened from {old}. Prior completion preserved.",
                                     old, new)
                 audit.log_status_history(case_id, old, new, user["user_id"],
-                                         "Case reopened; prior completion preserved.")
+                                         f"Reopened by {user['name']}; prior closure preserved.")
                 audit.log_audit("case", case_id, "case_reopened", user["user_id"],
-                                f"Case reopened from {old}. Prior completion preserved.",
+                                f"Case reopened from {old} by {user['name']}. Prior closure preserved.",
                                 {"from": old, "to": new})
             else:
                 db.execute("UPDATE cases SET status=%s WHERE case_id=%s",
@@ -481,3 +501,95 @@ def case_history(case_id):
             "status_history_count": len(status_history),
         },
     })
+
+
+# ---------------------------------------------------------------------------
+# Closed-case endpoints (PS-02 — closed-case visibility across dashboards)
+#
+# These enforce role-based access in Flask (not just frontend filtering):
+#   /closed/my          -> the authenticated user's OWN closures (cases they
+#                         actually closed, regardless of assignment)
+#   /closed/team        -> Team Lead: closed cases assigned to any Resource
+#                         (the "team"). Resources get 403.
+#   /closed/organization -> Admin: all closures org-wide. Lead/Resource 403.
+#
+# Each row carries: case_id, case_code, title, category, priority, complexity,
+# created_at, assigned_to_name, closed_by_name, closed_at, status.
+# `complexity` is NULL -> the frontend shows "Not assessed".
+# ---------------------------------------------------------------------------
+
+CLOSED_CASE_FIELDS = """SELECT
+    c.case_id, c.case_code, c.title, c.category, c.priority, c.complexity,
+    c.created_at, c.completion_date, c.closed_at, c.status,
+    ua.name AS assigned_to_name,
+    ucl.name AS closed_by_name
+"""
+
+
+def _serialize_closed(row):
+    return {
+        "case_id": row["case_id"],
+        "case_code": row["case_code"],
+        "title": row["title"],
+        "category": row["category"],
+        "priority": row["priority"],
+        "complexity": row["complexity"],  # None -> "Not assessed" in UI
+        "created_at": str(row["created_at"]),
+        "closed_at": str(row["closed_at"]) if row["closed_at"] else None,
+        "completion_date": str(row["completion_date"]) if row["completion_date"] else None,
+        "status": row["status"],
+        "assigned_to_name": row["assigned_to_name"] or "Unassigned",
+        "closed_by_name": row["closed_by_name"] or "—",
+    }
+
+
+@cases_bp.route("/closed/my", methods=["GET"])
+@require_auth
+def closed_my():
+    """Cases the authenticated user actually closed (closed_by_user_id = them),
+    regardless of who the case was assigned to. A Resource sees only their
+    own closures; an Admin/Lead who closes a case also sees it here."""
+    user = current_user()
+    rows = db.fetch_all(
+        f"""{CLOSED_CASE_FIELDS}
+           FROM cases c
+           LEFT JOIN users ua ON ua.user_id = c.assigned_to
+           LEFT JOIN users ucl ON ucl.user_id = c.closed_by_user_id
+           WHERE c.status = 'Completed' AND c.closed_by_user_id = %s
+           ORDER BY c.closed_at DESC, c.case_id DESC""", (user["user_id"],))
+    return jsonify({"closed": [_serialize_closed(r) for r in rows], "count": len(rows)})
+
+
+@cases_bp.route("/closed/team", methods=["GET"])
+@require_role("Admin", "Team Lead")
+def closed_team():
+    """Closed cases assigned to any Resource — the team's closures.
+    Admin sees them too (org-wide is /closed/organization; this is the team
+    view a Lead uses). Could be extended to a Lead's specific team if teams
+    are modelled; today every Resource is in the org's pool."""
+    rows = db.fetch_all(
+        f"""{CLOSED_CASE_FIELDS}
+           FROM cases c
+           LEFT JOIN users ua ON ua.user_id = c.assigned_to
+           LEFT JOIN users ucl ON ucl.user_id = c.closed_by_user_id
+           WHERE c.status = 'Completed'
+             AND c.assigned_to IS NOT NULL
+             AND EXISTS (SELECT 1 FROM users u2
+                          WHERE u2.user_id = c.assigned_to
+                            AND u2.role = 'Resource')
+           ORDER BY c.closed_at DESC, c.case_id DESC""")
+    return jsonify({"closed": [_serialize_closed(r) for r in rows], "count": len(rows)})
+
+
+@cases_bp.route("/closed/organization", methods=["GET"])
+@require_role("Admin")
+def closed_organization():
+    """All closed cases across the organization. Admin-only."""
+    rows = db.fetch_all(
+        f"""{CLOSED_CASE_FIELDS}
+           FROM cases c
+           LEFT JOIN users ua ON ua.user_id = c.assigned_to
+           LEFT JOIN users ucl ON ucl.user_id = c.closed_by_user_id
+           WHERE c.status = 'Completed'
+           ORDER BY c.closed_at DESC, c.case_id DESC""")
+    return jsonify({"closed": [_serialize_closed(r) for r in rows], "count": len(rows)})

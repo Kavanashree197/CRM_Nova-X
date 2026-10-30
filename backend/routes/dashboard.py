@@ -123,6 +123,41 @@ def summary():
            WHERE role='Resource' AND active=1 AND availability<>'Available'
            ORDER BY name""")
 
+    # ---- Closed-case analytics (PS-02 — closed-case visibility) ----
+    # Closed = status 'Completed' (the project's case lifecycle uses Completed
+    # as the closure state; Reopened cases are no longer closed).
+    closed_by_complexity = {}
+    for r in db.fetch_all(
+            """SELECT COALESCE(complexity, 'Not assessed') AS complexity,
+                      COUNT(*) AS c FROM cases
+               WHERE status='Completed' GROUP BY complexity"""):
+        closed_by_complexity[r["complexity"]] = r["c"]
+
+    closed_by_priority = {}
+    for r in db.fetch_all(
+            """SELECT priority, COUNT(*) AS c FROM cases
+               WHERE status='Completed' GROUP BY priority"""):
+        closed_by_priority[r["priority"]] = r["c"]
+
+    closed_by_employee = []
+    for r in db.fetch_all(
+            """SELECT ucl.name AS closed_by_name, COUNT(*) AS c
+               FROM cases c
+               LEFT JOIN users ucl ON ucl.user_id = c.closed_by_user_id
+               WHERE c.status='Completed' AND c.closed_by_user_id IS NOT NULL
+               GROUP BY c.closed_by_user_id ORDER BY c DESC"""):
+        closed_by_employee.append({"closed_by_name": r["closed_by_name"], "count": r["c"]})
+
+    # Closure trend: last 14 days, by day
+    closure_trend = []
+    for i in range(13, -1, -1):
+        d = (date.today() - timedelta(days=i)).isoformat()
+        # SQLite stores closed_at as 'YYYY-MM-DD HH:MM:SS'; DATE() truncates.
+        n = db.fetch_one(
+            "SELECT COUNT(*) AS c FROM cases WHERE status='Completed' AND DATE(closed_at) = %s",
+            (d,))["c"]
+        closure_trend.append({"date": d, "closed": n})
+
     return jsonify({
         "kpis": {
             "total_cases": total,
@@ -134,6 +169,7 @@ def summary():
             "is_empty": total == 0,
             "awaiting_assignment": awaiting_assignment,
             "auto_assigned": auto_assigned_total,
+            "closed_cases": completed,
         },
         "status_distribution": status_dist,
         "workload": workload,
@@ -145,4 +181,12 @@ def summary():
         "priority_cases": priority_cases,
         "overdue_cases": overdue_cases,
         "upcoming_due": upcoming,
+        # Closed-case analytics (PS-02)
+        "closed_analytics": {
+            "total_closed": completed,
+            "by_complexity": closed_by_complexity,
+            "by_priority": closed_by_priority,
+            "by_employee": closed_by_employee,
+            "trend": closure_trend,
+        },
     })

@@ -35,15 +35,23 @@ TODAY = date.today()
 #   Account Access / Data Migration         → Medium  (operational, time-sensitive)
 #   Compliance                              → Critical (legal/regulatory — e.g. GDPR 30-day)
 #   Onboarding / Feature Request            → Low     (non-urgent / planning)
+# Category -> (default_priority, complexity, description).
+# Complexity is the baseline for cases of this category (Low/Medium/High).
+# It is copied onto the case row at closure time so dashboards show one
+# consistent value across roles. Rationale:
+#   Compliance / Data Migration   -> High   (regulated / large-scope, multi-step)
+#   Billing / Technical Support    -> Medium (operational, scoped to one issue)
+#   Onboarding / Feature Request  -> Low    (procedural / planning)
+#   Account Access / Bug Report    -> Medium (often a quick fix, sometimes deep)
 DEFAULT_CATEGORIES = [
-    ("Billing",           "High",     "Invoices, payments, refunds, charge disputes"),
-    ("Technical Support", "High",     "Product bugs, errors, integration failures"),
-    ("Account Access",    "Medium",   "Login, password, SSO, permissions"),
-    ("Onboarding",        "Low",      "New customer setup and provisioning"),
-    ("Feature Request",   "Low",      "Customer-requested product enhancements"),
-    ("Bug Report",        "High",     "Reproducible product defects"),
-    ("Data Migration",    "Medium",   "Bulk imports, exports, transfers"),
-    ("Compliance",        "Critical", "GDPR, data export, legal holds"),
+    ("Billing",            "High",     "Medium", "Invoices, payments, refunds, charge disputes"),
+    ("Technical Support",  "High",     "Medium", "Product bugs, errors, integration failures"),
+    ("Account Access",     "Medium",  "Medium", "Login, password, SSO, permissions"),
+    ("Onboarding",         "Low",      "Low",    "New customer setup and provisioning"),
+    ("Feature Request",    "Low",      "Low",    "Customer-requested product enhancements"),
+    ("Bug Report",         "High",     "Medium", "Reproducible product defects"),
+    ("Data Migration",     "Medium",  "High",   "Bulk imports, exports, transfers"),
+    ("Compliance",         "Critical", "High",  "GDPR, data export, legal holds"),
 ]
 
 
@@ -83,10 +91,10 @@ def seed_users():
 
 def seed_categories():
     db.execute("DELETE FROM categories")
-    for name, default_priority, desc in DEFAULT_CATEGORIES:
+    for name, default_priority, complexity, desc in DEFAULT_CATEGORIES:
         db.execute(
-            "INSERT INTO categories (name, default_priority, description) VALUES (%s, %s, %s)",
-            (name, default_priority, desc),
+            "INSERT INTO categories (name, default_priority, complexity, description) VALUES (%s, %s, %s, %s)",
+            (name, default_priority, complexity, desc),
         )
 
 

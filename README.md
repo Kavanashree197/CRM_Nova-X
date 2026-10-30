@@ -97,6 +97,80 @@ No code changes — `config.py` reads env vars; `database.py` switches drivers.
 
 ---
 
+## Running in Visual Studio Code (two terminals)
+
+The project is portable — no Z.ai workspace paths are required.
+
+### 1. Backend (Flask) — Terminal 1
+
+```bash
+cd backend
+python -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+cp .env.example .env                              # edit DB_TYPE, SECRET_KEY, etc.
+python seed.py                                    # 6 users + 8 categories + skills, 0 cases
+python app.py                                     # http://127.0.0.1:5000
+```
+
+### 2. Frontend (Vite + React) — Terminal 2
+
+```bash
+cd frontend
+npm install
+cp .env.example .env                              # optional — defaults work locally
+npm run dev                                       # http://localhost:3000  (proxies /api -> :5000)
+```
+
+Open **http://localhost:3000** in your browser. Login: `admin@crm.io` / `admin123`.
+
+> **MySQL on your machine:** `mysql -u root -p < backend/schema.sql` creates the
+> full schema (10 tables incl. `closed_by_user_id`, `complexity`, `user_skills`).
+> Then set `DB_TYPE=mysql` in `backend/.env` and restart `python app.py`.
+
+### Configuration via environment variables
+
+| Variable | Where | Purpose |
+|---|---|---|
+| `DB_TYPE` | backend | `sqlite` (default) or `mysql` |
+| `DB_HOST`/`DB_USER`/`DB_PASSWORD`/`DB_NAME` | backend | MySQL connection |
+| `SECRET_KEY` | backend | JWT signing secret (32+ bytes) |
+| `FLASK_PORT` | backend | default 5000 |
+| `VITE_PORT` | frontend | dev server port (default 3000) |
+| `VITE_API_TARGET` | frontend | backend URL for the dev proxy (default `http://127.0.0.1:5000`) |
+
+Never commit real credentials. `.env.example` files are provided in both
+`backend/` and `frontend/` with safe placeholder values.
+
+---
+
+## Closed-case visibility (PS-02)
+
+Closed cases are visible across all three role dashboards:
+
+| Role | Section | API endpoint | Sees |
+|---|---|---|---|
+| Resource | My Cases → **My Closed Cases** | `GET /api/cases/closed/my` | cases the user *personally closed* |
+| Team Lead | Overview → **Team Closed Cases** | `GET /api/cases/closed/team` | closed cases assigned to any Resource |
+| Admin | Overview → **Organization Closed Cases** | `GET /api/cases/closed/organization` | all closed cases org-wide |
+
+Each closed-case row shows: case ID, title, category, priority, **complexity**,
+created date, assigned employee, **closed by** (the actual closer), closed date,
+final status. Role access is enforced in Flask (403 on cross-role access).
+
+### Closure attribution
+When a case is marked Completed, the backend records the **authenticated**
+user who closed it (`closed_by_user_id` + `closed_at`) from the JWT — never
+from the request body. The closer may differ from the assignee (e.g. an Admin
+closes a case on behalf of a Resource). Both names are displayed.
+
+### Case complexity
+Each category has a baseline complexity (Low/Medium/High) in the `categories`
+table. At closure, it is copied onto the case row (`cases.complexity`) so
+every dashboard shows one consistent value. If complexity is NULL the UI
+shows "Not assessed". Existing cases are backfilled by `migrate_closed_cases.py`.
+
+---
+
 ## Project structure
 
 ```

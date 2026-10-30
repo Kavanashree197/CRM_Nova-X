@@ -5,6 +5,7 @@ import CaseTable from '../components/CaseTable'
 import CaseDetailDrawer from '../components/CaseDetailDrawer'
 import AvailabilityControl from '../components/AvailabilityControl'
 import MySkillsControl from '../components/MySkillsControl'
+import ClosedCasesTable from '../components/ClosedCasesTable'
 import { Loading } from '../components/Feedback'
 import { useNavigate } from 'react-router-dom'
 import { IconPlus } from '../components/icons'
@@ -15,6 +16,8 @@ export default function MyCases() {
   const { user } = useAuth()
   const nav = useNavigate()
   const [cases, setCases] = useState(null)
+  const [closedCases, setClosedCases] = useState([])
+  const [closedLoading, setClosedLoading] = useState(true)
   const [loading, setLoading] = useState(true)
   const [openId, setOpenId] = useState(null)
 
@@ -24,7 +27,15 @@ export default function MyCases() {
       .then(d => setCases(d.cases)).finally(() => setLoading(false))
   }, [user])
 
-  useEffect(() => { if (user) load() }, [user, load])
+  const loadClosed = useCallback(() => {
+    setClosedLoading(true)
+    apiGet('/api/cases/closed/my')
+      .then(d => setClosedCases(d.closed || []))
+      .catch(() => setClosedCases([]))
+      .finally(() => setClosedLoading(false))
+  }, [])
+
+  useEffect(() => { if (user) { load(); loadClosed() } }, [user, load, loadClosed])
 
   if (!user) return null
   const dueToday     = (cases || []).filter(c => c.due_date === today() && c.status !== 'Completed')
@@ -48,11 +59,12 @@ export default function MyCases() {
       {/* Self-service My Skills (Resources add new skills to their profile) */}
       <MySkillsControl />
 
-      <div className="grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
+      <div className="grid" style={{ gridTemplateColumns: 'repeat(5, 1fr)' }}>
         <MiniStat label="Assigned to me" value={cases?.length ?? '—'} />
         <MiniStat label="Due today" value={dueToday.length} tone="amber" />
         <MiniStat label="Overdue" value={overdue.length} tone="red" />
         <MiniStat label="Upcoming" value={upcoming.length} tone="blue" />
+        <MiniStat label="My closed cases" value={closedCases.length} tone="green" />
       </div>
 
       <Section title="Due today" cases={dueToday} onRow={setOpenId} loading={loading && !cases} empty="Nothing due today." />
@@ -60,13 +72,28 @@ export default function MyCases() {
       <Section title="Upcoming" cases={upcoming} onRow={setOpenId} loading={loading && !cases} empty="No upcoming cases." />
       <Section title="Recently updated" cases={updated.slice(0, 6)} onRow={setOpenId} loading={loading && !cases} empty="No cases yet." />
 
-      {openId && <CaseDetailDrawer caseId={openId} onClose={() => setOpenId(null)} onChanged={load} />}
+      {/* My Closed Cases — cases the authenticated user actually closed (PS-02) */}
+      <div className="card mt-16">
+        <div className="card-head">
+          <div className="card-title">My Closed Cases</div>
+          <div className="card-link">{closedCases.length} closure{closedCases.length === 1 ? '' : 's'}</div>
+        </div>
+        <ClosedCasesTable rows={closedCases} loading={closedLoading}
+                          emptyTitle="You haven't closed any cases yet"
+                          onRowClick={setOpenId} />
+      </div>
+
+      {openId && <CaseDetailDrawer caseId={openId} onClose={() => setOpenId(null)} onChanged={() => { load(); loadClosed() }} />}
     </div>
   )
 }
 
 function MiniStat({ label, value, tone }) {
-  const color = tone === 'red' ? 'var(--overdue)' : tone === 'amber' ? 'var(--st-pending)' : tone === 'blue' ? 'var(--accent)' : 'var(--text)'
+  const color = tone === 'red' ? 'var(--overdue)'
+             : tone === 'amber' ? 'var(--st-pending)'
+             : tone === 'blue' ? 'var(--accent)'
+             : tone === 'green' ? 'var(--st-done)'
+             : 'var(--text)'
   return (
     <div className="card card-pad">
       <div className="kpi-label">{label}</div>

@@ -7,6 +7,7 @@ import { StatusBadge, PriorityBadge, OverdueTag } from '../components/Badge'
 import { Loading, EmptyState } from '../components/Feedback'
 import CaseDetailDrawer from '../components/CaseDetailDrawer'
 import AvailabilityControl from '../components/AvailabilityControl'
+import ClosedCasesTable from '../components/ClosedCasesTable'
 import {
   ResponsiveContainer, BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, Area, AreaChart,
@@ -27,13 +28,24 @@ export default function Overview() {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [openId, setOpenId] = useState(null)
+  const [closedCases, setClosedCases] = useState([])
+  const [closedLoading, setClosedLoading] = useState(true)
 
   const load = useCallback(() => {
     setLoading(true)
     apiGet('/api/dashboard/summary').then(setData).finally(() => setLoading(false))
   }, [])
 
-  useEffect(() => { load() }, [load])
+  // Closed-case list for the dashboard: Admin -> org-wide, Team Lead -> team,
+  // Resource doesn't need it here (their My Cases page has My Closed Cases).
+  const loadClosed = useCallback(() => {
+    if (!user || user.role === 'Resource') { setClosedCases([]); setClosedLoading(false); return }
+    const url = user.role === 'Admin' ? '/api/cases/closed/organization' : '/api/cases/closed/team'
+    setClosedLoading(true)
+    apiGet(url).then(d => setClosedCases(d.closed || [])).catch(() => setClosedCases([])).finally(() => setClosedLoading(false))
+  }, [user])
+
+  useEffect(() => { load(); loadClosed() }, [load, loadClosed])
 
   if (loading) return <Loading label="Loading dashboard…" />
   if (!data) return <EmptyState title="Couldn't load dashboard" />
@@ -328,7 +340,25 @@ export default function Overview() {
         </>
       )}
 
-      {openId && <CaseDetailDrawer caseId={openId} onClose={() => setOpenId(null)} onChanged={load} />}
+      {/* Closed-case visibility across dashboards (PS-02)
+          Admin -> Organization Closed Cases; Team Lead -> Team Closed Cases.
+          Resources see their own closed cases on the My Cases page instead. */}
+      {user && user.role !== 'Resource' && (
+        <div className="card mt-16">
+          <div className="card-head">
+            <div className="card-title">
+              {user.role === 'Admin' ? 'Organization Closed Cases' : 'Team Closed Cases'}
+            </div>
+            <div className="card-link">{closedCases.length} closure{closedCases.length === 1 ? '' : 's'}</div>
+          </div>
+          <ClosedCasesTable rows={closedCases} loading={closedLoading}
+                            showAssignee={true}
+                            emptyTitle={user.role === 'Admin' ? 'No organization-wide closed cases yet' : 'No team closed cases yet'}
+                            onRowClick={setOpenId} />
+        </div>
+      )}
+
+      {openId && <CaseDetailDrawer caseId={openId} onClose={() => setOpenId(null)} onChanged={() => { load(); loadClosed() }} />}
     </div>
   )
 }

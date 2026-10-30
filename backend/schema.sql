@@ -46,13 +46,25 @@ CREATE TABLE cases (
     next_action       VARCHAR(255) NULL,
     completion_date   DATE NULL,
     resolution_note   TEXT NULL,
+    -- Closure attribution (PS-02): the authenticated user who actually closed
+    -- the case + when. Distinct from assigned_to — the closer may differ from
+    -- the assignee (e.g. a Team Lead or Admin closes on behalf of a resource).
+    closed_by_user_id INT NULL,
+    closed_at         TIMESTAMP NULL,
+    -- Case complexity: Low / Medium / High, or NULL = "Not assessed".
+    -- Copied from the case's category at closure time so dashboards show one
+    -- consistent value across roles.
+    complexity        ENUM('Low','Medium','High') NULL,
     created_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     CONSTRAINT fk_cases_creator  FOREIGN KEY (created_by)  REFERENCES users(user_id),
     CONSTRAINT fk_cases_assignee FOREIGN KEY (assigned_to) REFERENCES users(user_id),
+    CONSTRAINT fk_cases_closed_by FOREIGN KEY (closed_by_user_id) REFERENCES users(user_id),
     INDEX idx_cases_status   (status),
     INDEX idx_cases_assignee (assigned_to),
-    INDEX idx_cases_due      (due_date)
+    INDEX idx_cases_due      (due_date),
+    INDEX idx_cases_closed_by (closed_by_user_id),
+    INDEX idx_cases_complexity (complexity)
 ) ENGINE=InnoDB;
 
 -- ----------------------------------------------------------------------------
@@ -120,6 +132,9 @@ CREATE TABLE categories (
     name             VARCHAR(50) NOT NULL UNIQUE,
     description      VARCHAR(255) NULL,
     default_priority ENUM('Low','Medium','High','Critical') NOT NULL DEFAULT 'Medium',
+    -- Baseline complexity for cases of this category. Copied onto the case
+    -- row at closure time so dashboards show one consistent value.
+    complexity       ENUM('Low','Medium','High') NULL,
     created_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
 
