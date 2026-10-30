@@ -1,9 +1,9 @@
-"""Dashboard summary endpoint - all KPIs and chart datasets in one call."""
+"""Dashboard summary endpoints - org-wide + team-specific."""
 from flask import Blueprint, jsonify
 from datetime import date, timedelta
 
 import database as db
-from auth import require_auth
+from auth import require_auth, require_role
 
 dashboard_bp = Blueprint("dashboard", __name__)
 
@@ -188,5 +188,155 @@ def summary():
             "by_priority": closed_by_priority,
             "by_employee": closed_by_employee,
             "trend": closure_trend,
+        },
+    })
+
+
+# ---------------------------------------------------------------------------
+# GET /api/dashboard/team  (Team Lead + Admin)
+# Returns team-specific dashboard data: employee workload table, cases
+# requiring attention, follow-ups, team KPIs. All from real DB records.
+# ---------------------------------------------------------------------------
+@dashboard_bp.route("/team", methods=["GET"])
+@require_role("Admin", "Team Lead")
+def team_dashboard():
+    today_iso = date.today().isoformat()
+    today = date.today()
+
+    # ---- Team KPIs (cases assigned to Resources = "the team") ----
+    team_total    = db.fetch_one("SELECT COUNT(*) AS c FROM cases WHERE assigned_to IS NOT NULL")["c"]
+    team_active   = db.fetch_one(
+        "SELECT COUNT(*) AS c FROM cases WHERE assigned_to IS NOT NULL AND status IN ('New','Active','Pending','Reopened')")["c"]
+    team_pending  = db.fetch_one(
+        "SELECT COUNT(*) AS c FROM cases WHERE assigned_to IS NOT NULL AND status='Pending'")["c"]
+    team_closed   = db.fetch_one(
+        "SELECT COUNT(*) AS c FROM cases WHERE assigned_to IS NOT NULL AND status='Completed'")["c"]
+    team_overdue  = db.fetch_one(
+        "SELECT COUNT(*) AS c FROM cases WHERE assigned_to IS NOT NULL AND status<>'Completed' AND due_date IS NOT NULL AND due_date < %s",
+        (today_iso,))["c"]
+    team_due_today = db.fetch_one(
+        "SELECT COUNT(*) AS c FROM cases WHERE assigned_to IS NOT NULL AND status<>'Completed' AND due_date = %s",
+        (today_iso,))["c"]
+    team_awaiting  = db.fetch_one(
+        "SELECT COUNT(*) AS c FROM cases WHERE assignment_status='Awaiting Assignment'")["c"]
+
+    # ---- Employee workload table (detailed per-Resource) ----
+    employees = db.fetch_all(
+        """SELECT u.user_id, u.name, u.availability,
+                  SUM(CASE WHEN c.status IN ('New','Active','Pending','Reopened') THEN 1 ELSE 0 END) AS active_count,
+                  SUM(CASE WHEN c.status='Completed' THEN 1 ELSE 0 END) AS closed_count,
+                  SUM(CASE WHEN c.status<>'Completed' AND c.due_date IS NOT NULL AND c.due_date < %s THEN 1 ELSE 0 END) AS overdue_count,
+                  SUM(CASE WHEN c.status<>'Completed' AND c.due_date = %s THEN 1 ELSE 0 END) AS due_today_count,
+                  COUNT(c.case_id) AS total_count
+           FROM users u
+           LEFT JOIN cases c ON c.assigned_to = u.user_id
+           WHERE u.role='Resource' AND u.active=1
+           GROUP BY u.user_id, u.name, u.availability
+           ORDER BY active_count DESC, overdue_count DESC""", (today_iso, today_iso))
+
+    # ---- Cases requiring attention (awaiting + overdue + due-today) ----
+    awaiting_cases = db.fetch_all(
+        """SELECT case_id, case_code, title, category, priority, status, due_date
+           FROM cases WHERE assignment_status='Awaiting Assignment'
+           ORDER BY case_id DESC LIMIT 10""")
+    overdue_cases = db.fetch_all(
+        """SELECT case_id, case_code, title, category, priority, status, due_date,
+                  assigned_to, ua.name AS assigned_to_name
+           FROM cases LEFT JOIN users ua ON ua.user_id = cases.assigned_to
+           WHERE status <> 'Completed' AND due_date IS NOT NULL AND due_date < %s
+           ORDER BY due_date ASC LIMIT 15""", (today_iso,))
+    for c in overdue_cases:
+        try:
+            dd = date.fromisoformat(c["due_date"])
+            c["days_overdue"] = (today - dd).days
+        except Exception:
+            c["days_overdue"] = None
+
+    due_today_cases = db.fetch_all(
+        """SELECT case_id, case_code, title, category, priority, status,
+                  assigned_to, ua.name AS assigned_to_name
+           FROM cases LEFT JOIN users ua ON ua.user_id = cases.assigned_to
+           WHERE status <> 'Completed' AND due_date = %s
+           ORDER BY case_id DESC LIMIT 15""", (today_iso,))
+
+    upcoming_cases = db.fetch_all(
+        """SELECT case_id, case_code, title, category, priority, status, due_date,
+                  assigned_to, ua.name AS assigned_to_name
+           FROM cases LEFT JOIN users ua ON ua.user_id = cases.assigned_to
+           WHERE status <> 'Completed' AND due_date > %s AND due_date <= %s
+           ORDER BY due_date ASC LIMIT 15""",
+        (today_iso, (today + timedelta(days=7)).isoformat()))
+
+    recent_team_cases = db.fetch_all(
+        """SELECT c.case_id, c.case_code, c.title, c.category, c.priority, c.status,
+                  c.assigned_to, ua.name AS assigned_to_name, c.created_at
+           FROM cases c LEFT JOIN users ua ON ua.user_id = c.assigned_to
+           WHERE c.assigned_to IS NOT NULL
+           ORDER BY c.case_id DESC LIMIT 10""")
+
+    # ---- Team closed cases (with closer attribution + complexity) ----
+    team_closed = db.fetch_all(
+        """SELECT c.case_id, c.case_code, c.title, c.category, c.priority, c.complexity,
+                  c.created_at, c.closed_at, c.status,
+                  ua.name AS assigned_to_name, ucl.name AS closed_by_name
+           FROM cases c
+           LEFT JOIN users ua ON ua.user_id = c.assigned_to
+           LEFT JOIN users ucl ON ucl.user_id = c.closed_by_user_id
+           WHERE c.status = 'Completed' AND c.assigned_to IS NOT NULL
+           ORDER BY c.closed_at DESC LIMIT 20""")
+
+    # ---- Team productivity summary ----
+    by_employee_closed = []
+    for r in db.fetch_all(
+            """SELECT ucl.name AS closed_by_name, COUNT(*) AS c
+               FROM cases c LEFT JOIN users ucl ON ucl.user_id = c.closed_by_user_id
+               WHERE c.status='Completed' AND c.closed_by_user_id IS NOT NULL
+               GROUP BY c.closed_by_user_id ORDER BY c DESC"""):
+        by_employee_closed.append({"closed_by_name": r["closed_by_name"], "count": r["c"]})
+
+    by_complexity = {}
+    for r in db.fetch_all(
+            """SELECT COALESCE(complexity, 'Not assessed') AS complexity, COUNT(*) AS c
+               FROM cases WHERE status='Completed' GROUP BY complexity"""):
+        by_complexity[r["complexity"]] = r["c"]
+
+    # Closure trend (14 days)
+    trend = []
+    for i in range(13, -1, -1):
+        d = (date.today() - timedelta(days=i)).isoformat()
+        n = db.fetch_one(
+            "SELECT COUNT(*) AS c FROM cases WHERE status='Completed' AND DATE(closed_at) = %s",
+            (d,))["c"]
+        trend.append({"date": d, "closed": n})
+
+    return jsonify({
+        "kpis": {
+            "team_total": team_total,
+            "team_active": team_active,
+            "team_pending": team_pending,
+            "team_closed": team_closed,
+            "team_overdue": team_overdue,
+            "team_due_today": team_due_today,
+            "team_awaiting": team_awaiting,
+        },
+        "employees": employees,
+        "awaiting_cases": awaiting_cases,
+        "overdue_cases": overdue_cases,
+        "due_today_cases": due_today_cases,
+        "upcoming_cases": upcoming_cases,
+        "recent_team_cases": recent_team_cases,
+        "team_closed": [{"case_id": r["case_id"], "case_code": r["case_code"],
+                          "title": r["title"], "category": r["category"],
+                          "priority": r["priority"], "complexity": r["complexity"],
+                          "created_at": str(r["created_at"]),
+                          "closed_at": str(r["closed_at"]) if r["closed_at"] else None,
+                          "status": r["status"],
+                          "assigned_to_name": r["assigned_to_name"] or "Unassigned",
+                          "closed_by_name": r["closed_by_name"] or "—"}
+                         for r in team_closed],
+        "productivity": {
+            "by_employee_closed": by_employee_closed,
+            "by_complexity": by_complexity,
+            "trend": trend,
         },
     })

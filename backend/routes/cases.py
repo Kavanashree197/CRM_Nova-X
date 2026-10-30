@@ -125,8 +125,11 @@ def list_cases():
 # POST /api/cases  - create
 # ---------------------------------------------------------------------------
 @cases_bp.route("", methods=["POST"])
-@require_auth
+@require_role("Resource")
 def create_case():
+    """Only Resources create cases. Admins and Team Leads monitor but don't
+    create — the role is verified from the JWT, never trusted from the client.
+    This enforces the permission in Flask, not just by hiding the UI button."""
     user = current_user()
     data = request.get_json(force=True) or {}
 

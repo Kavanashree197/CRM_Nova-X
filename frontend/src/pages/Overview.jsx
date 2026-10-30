@@ -74,9 +74,13 @@ export default function Overview() {
           </div>
           <div style={{ fontSize: 18, fontWeight: 600 }}>No cases have been created yet</div>
           <div className="text-sm muted" style={{ marginTop: 6, marginBottom: 18 }}>
-            Create your first case to start tracking activity and productivity.
+            {user?.role === 'Resource'
+              ? 'Create your first case to start tracking activity and productivity.'
+              : 'Cases created by the operational team will appear here.'}
           </div>
-          <button className="btn btn-primary" onClick={() => nav('/create-case')}>+ Create your first case</button>
+          {user?.role === 'Resource' && (
+            <button className="btn btn-primary" onClick={() => nav('/create-case')}>+ Create your first case</button>
+          )}
         </div>
       )}
 

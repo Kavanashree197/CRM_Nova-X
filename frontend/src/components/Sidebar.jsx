@@ -14,7 +14,9 @@ const NAV = [
   // through "All Cases".
   { to: '/my-cases', label: 'My Cases', icon: IconBriefcase, roles: ['Resource'] },
   { to: '/all-cases', label: 'All Cases', icon: IconList, roles: ['Admin', 'Team Lead', 'Resource'] },
-  { to: '/create-case', label: 'Create Case', icon: IconPlus, roles: ['Admin', 'Team Lead', 'Resource'] },
+  // Only Resources create cases. Admins monitor org-wide; Team Leads monitor
+  // the team. The backend rejects case creation from Admin/Team Lead with 403.
+  { to: '/create-case', label: 'Create Case', icon: IconPlus, roles: ['Resource'] },
   { to: '/activity-logs', label: 'Activity Logs', icon: IconActivity, roles: ['Admin', 'Team Lead', 'Resource'] },
   { to: '/audit', label: 'Audit History', icon: IconHistory, roles: ['Admin', 'Team Lead', 'Resource'] },
   { to: '/reports', label: 'Productivity Reports', icon: IconReport, roles: ['Admin', 'Team Lead', 'Resource'] },
