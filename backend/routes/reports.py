@@ -43,6 +43,11 @@ def productivity():
     target = db.fetch_one("SELECT user_id, name, email, role FROM users WHERE user_id=%s", (uid,))
     if not target:
         return jsonify({"error": "User not found"}), 404
+    # Enforce: productivity reports are for RESOURCES only. An Admin or Team
+    # Lead cannot view their own (or anyone else's non-Resource) productivity
+    # through this endpoint — they are not operational employees.
+    if target["role"] != "Resource":
+        return jsonify({"error": "Productivity reports are only available for Resource / Operational Staff."}), 403
 
     created_count = db.fetch_one(
         "SELECT COUNT(*) AS c FROM cases WHERE created_by=%s AND DATE(created_at) BETWEEN %s AND %s",
@@ -105,7 +110,7 @@ def productivity():
     # Cases that contributed to the completed metric (click-through support)
     completed_cases = db.fetch_all(
         """SELECT case_id, case_code, title, status, priority, category,
-                  due_date, completion_date, created_at
+                  complexity, due_date, completion_date, created_at
            FROM cases WHERE assigned_to=%s AND status='Completed'
            AND completion_date BETWEEN %s AND %s
            ORDER BY completion_date DESC""", (uid, start, end))
@@ -113,10 +118,27 @@ def productivity():
     # Cases contributing to actions count
     actioned_cases = db.fetch_all(
         """SELECT DISTINCT c.case_id, c.case_code, c.title, c.status,
-                  c.priority, c.category, c.due_date
+                  c.priority, c.category, c.complexity, c.due_date
            FROM case_actions a JOIN cases c ON c.case_id = a.case_id
            WHERE a.user_id=%s AND DATE(a.created_at) BETWEEN %s AND %s
            ORDER BY c.case_id DESC""", (uid, start, end))
+
+    # ---- Per-user complexity statistics (PS-02) ----
+    # Cases handled by this user, grouped by complexity. "Handled" = assigned
+    # to this user. Uses COALESCE so NULL -> "Not assessed".
+    complexity_stats = {}
+    for r in db.fetch_all(
+            """SELECT COALESCE(complexity, 'Not assessed') AS complexity, COUNT(*) AS c
+               FROM cases WHERE assigned_to=%s GROUP BY complexity""", (uid,)):
+        complexity_stats[r["complexity"]] = r["c"]
+
+    # Closed cases grouped by complexity (for this user's closures)
+    closed_by_complexity = {}
+    for r in db.fetch_all(
+            """SELECT COALESCE(complexity, 'Not assessed') AS complexity, COUNT(*) AS c
+               FROM cases WHERE assigned_to=%s AND status='Completed'
+               GROUP BY complexity""", (uid,)):
+        closed_by_complexity[r["complexity"]] = r["c"]
 
     return jsonify({
         "user": target,
@@ -130,6 +152,10 @@ def productivity():
             "overdue_cases": overdue_count,
             "total_actions": actions_count,
             "avg_completion_days": avg_completion_days,
+        },
+        "complexity_stats": {
+            "all_cases": complexity_stats,       # all cases assigned to this user
+            "closed_cases": closed_by_complexity, # only Completed cases
         },
         "trend": [{"label": s["bucket"], "actions": s["actions"]} for s in series],
         "completed_cases": completed_cases,
@@ -213,6 +239,36 @@ def team_report():
         f"""SELECT c.category, COUNT(*) AS count FROM cases c {where_sql}
             GROUP BY c.category ORDER BY count DESC""", params)
 
+    # ---- Complexity statistics (PS-02) — org-wide / team ----
+    # All cases in range grouped by complexity (NULL -> "Not assessed")
+    complexity_break = {}
+    for r in db.fetch_all(
+            f"""SELECT COALESCE(c.complexity, 'Not assessed') AS complexity, COUNT(*) AS c
+                FROM cases c {where_sql}
+                GROUP BY c.complexity""", params):
+        complexity_break[r["complexity"]] = r["c"]
+
+    # Closed cases grouped by complexity
+    closed_by_complexity = {}
+    for r in db.fetch_all(
+            f"""SELECT COALESCE(c.complexity, 'Not assessed') AS complexity, COUNT(*) AS c
+                FROM cases c {where_sql} AND c.status='Completed'
+                GROUP BY c.complexity""", params):
+        closed_by_complexity[r["complexity"]] = r["c"]
+
+    # Per-resource complexity breakdown (cases assigned to each Resource,
+    # grouped by complexity). Only Resources are included (the resources
+    # query already filters WHERE u.role='Resource').
+    per_resource_complexity = {}
+    for r in resources:
+        uid_r = r["user_id"]
+        breakdown = {}
+        for cr in db.fetch_all(
+                """SELECT COALESCE(complexity, 'Not assessed') AS complexity, COUNT(*) AS c
+                   FROM cases WHERE assigned_to=%s GROUP BY complexity""", (uid_r,)):
+            breakdown[cr["complexity"]] = cr["c"]
+        per_resource_complexity[str(uid_r)] = breakdown
+
     return jsonify({
         "range": {"start_date": start, "end_date": end, "granularity": granularity,
                   "status": status, "category": category},
@@ -220,4 +276,7 @@ def team_report():
         "trend": [{"label": s["bucket"], "actions": s["actions"]} for s in series],
         "status_breakdown": {r["status"]: r["count"] for r in status_break},
         "category_breakdown": {r["category"]: r["count"] for r in category_break},
+        "complexity_breakdown": complexity_break,
+        "closed_by_complexity": closed_by_complexity,
+        "per_resource_complexity": per_resource_complexity,
     })

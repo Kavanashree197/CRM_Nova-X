@@ -145,6 +145,7 @@ def summary():
                FROM cases c
                LEFT JOIN users ucl ON ucl.user_id = c.closed_by_user_id
                WHERE c.status='Completed' AND c.closed_by_user_id IS NOT NULL
+                 AND ucl.role = 'Resource'
                GROUP BY c.closed_by_user_id ORDER BY c DESC"""):
         closed_by_employee.append({"closed_by_name": r["closed_by_name"], "count": r["c"]})
 
@@ -291,6 +292,7 @@ def team_dashboard():
             """SELECT ucl.name AS closed_by_name, COUNT(*) AS c
                FROM cases c LEFT JOIN users ucl ON ucl.user_id = c.closed_by_user_id
                WHERE c.status='Completed' AND c.closed_by_user_id IS NOT NULL
+                 AND ucl.role = 'Resource'
                GROUP BY c.closed_by_user_id ORDER BY c DESC"""):
         by_employee_closed.append({"closed_by_name": r["closed_by_name"], "count": r["c"]})
 

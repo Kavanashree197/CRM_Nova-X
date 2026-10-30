@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import { apiGet } from '../api'
 import { Loading, EmptyState } from '../components/Feedback'
+import { ComplexityBadge } from '../components/Badge'
 import { ResponsiveContainer, BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts'
 
 const STATUS_COLORS = { New: '#4F46E5', Active: '#2563EB', Pending: '#B45309', Completed: '#047857', Reopened: '#B91C1C' }
@@ -149,6 +150,25 @@ function TeamView({ data }) {
           </div>
         </div>
       </div>
+
+      {/* Complexity distribution (PS-02) */}
+      {data.complexity_breakdown && Object.keys(data.complexity_breakdown).length > 0 && (
+        <div className="card mt-16">
+          <div className="card-head"><div className="card-title">Case Complexity Distribution</div></div>
+          <div className="card-pad">
+            <div className="grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+              {['Low', 'Medium', 'High', 'Not assessed'].map(label => (
+                <div key={label} style={{ textAlign: 'center', padding: 8 }}>
+                  <div style={{ marginBottom: 6 }}><ComplexityBadge complexity={label === 'Not assessed' ? null : label} /></div>
+                  <div className="mono" style={{ fontSize: 22, fontWeight: 700 }}>{data.complexity_breakdown[label] || 0}</div>
+                  <div className="text-xs muted">total</div>
+                  <div className="mono text-sm" style={{ color: 'var(--st-done)', marginTop: 4 }}>{(data.closed_by_complexity || {})[label] || 0} closed</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
