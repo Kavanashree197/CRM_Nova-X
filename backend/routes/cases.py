@@ -192,8 +192,12 @@ def create_case():
          customer_name, customer_email, customer_phone, contact_method),
     )
 
-    # --- Automatic assignment engine (no client input) ---
-    assigned_uid = assignment.assign_case(cid, category)
+    # --- Automatic assignment engine (workload + complexity based) ---
+    # Pass the category's complexity so the engine weights the new case.
+    cat_complexity = cat_row.get("complexity") if "cat_row" in dir() else None
+    # Actually cat_row only has default_priority; fetch complexity separately
+    cat_cx = db.fetch_one("SELECT complexity FROM categories WHERE name=%s", (category,))
+    assigned_uid = assignment.assign_case(cid, category, complexity=cat_cx["complexity"] if cat_cx else None)
 
     if assigned_uid:
         assignee_name = db.fetch_one("SELECT name FROM users WHERE user_id=%s",

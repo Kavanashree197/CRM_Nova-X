@@ -1,21 +1,13 @@
-"""Intelligent automatic case-assignment engine.
+"""Automatic case-assignment engine — Workload & Complexity Based.
 
-Rule-based (no AI / no external services). Factors, in priority order:
+No skill matching. The engine considers:
+  1. Availability — only `Available` Resources (Admins/Leads never get cases)
+  2. Current workload score — sum of complexity weights for each active case
+  3. Projected workload — current + new case's complexity weight
+  4. Tie-breakers: fewest active cases, then least-recently-assigned
 
-  1. Skills match   — only Resources whose `user_skills` include ALL of the
-                      category's `category_skills` (required skills). The
-                      skill catalog is normalized (aliases like AI/Artificial
-                      Intelligence resolve to one row), so adding a skill to
-                      an employee in Settings makes them immediately eligible
-                      — no code change.
-  2. Availability    — only `Available` employees (Admins/Leads never get cases)
-  3. Workload        — fewest active (non-Completed) assigned cases wins
-  4. Round-robin     — tie broken by least-recently-assigned (oldest
-                       case_assignments.assigned_at among the tied employees,
-                       or never-assigned beats anyone)
-
-For Critical/High priority cases the same rules apply — the skill match is
-the gatekeeper, so an unqualified employee is never assigned a critical case.
+Complexity weights: Low=1, Medium=2, High=3, NULL/unknown=2 (treated as
+Medium so unassessed cases don't skew the distribution).
 
 Returns a dict describing the decision (used both to perform the assignment
 and to write a human-readable `assignment_reason`).
@@ -23,10 +15,32 @@ and to write a human-readable `assignment_reason`).
 import database as db
 
 
+# Complexity → weight. NULL/unknown defaults to Medium (2).
+COMPLEXITY_WEIGHTS = {"Low": 1, "Medium": 2, "High": 3}
+DEFAULT_WEIGHT = 2  # when complexity is NULL or not recognised
+
 ACTIVE_STATUSES = ("New", "Active", "Pending", "Reopened")
 
 
-def _active_workload(user_id):
+def _complexity_weight(complexity):
+    """Return the numeric weight for a complexity level."""
+    return COMPLEXITY_WEIGHTS.get(complexity, DEFAULT_WEIGHT)
+
+
+def _active_workload_score(user_id):
+    """Sum of complexity weights for the user's active (non-Completed) cases.
+    Uses the case row's `complexity` column (copied from the category at
+    closure time, or set on creation). Active cases that haven't been closed
+    yet may have NULL complexity — those count as Medium (2)."""
+    rows = db.fetch_all(
+        """SELECT complexity FROM cases
+           WHERE assigned_to = %s AND status NOT IN ('Completed')""",
+        (user_id,))
+    return sum(_complexity_weight(r["complexity"]) for r in rows)
+
+
+def _active_case_count(user_id):
+    """Number of active (non-Completed) cases assigned to this user."""
     return db.fetch_one(
         """SELECT COUNT(*) AS c FROM cases
            WHERE assigned_to = %s AND status NOT IN ('Completed')""",
@@ -42,83 +56,95 @@ def _last_assigned_at(user_id):
     return row["last"] if row else None
 
 
-def pick_assignee(category):
-    """Choose the best eligible employee for a case of the given category.
+def pick_assignee(category, new_case_complexity=None):
+    """Choose the best eligible Resource for a new case.
 
-    Returns None when no eligible employee is available (case stays
-    'Awaiting Assignment'). Otherwise returns a dict:
-      { user_id, name, reason, method, required_skills, matched_skills }
+    Args:
+        category: the case's category name (used to look up complexity if
+                  new_case_complexity is not provided).
+        new_case_complexity: the complexity of the new case (Low/Medium/High),
+                  or None — in which case the category's complexity is used.
+
+    Returns None when no Available Resource exists (case stays Awaiting
+    Assignment). Otherwise returns a dict:
+      { user_id, name, reason, method, workload_score, projected_score }
     """
-    # 1. Required skills for this category (from category_skills + skills).
-    required = db.fetch_all(
-        """SELECT s.skill_id, s.name FROM category_skills cs
-           JOIN skills s ON s.skill_id = cs.skill_id
-           JOIN categories c ON c.category_id = cs.category_id
-           WHERE c.name = %s""", (category,))
-    required_ids = {r["skill_id"] for r in required}
-    required_names = sorted(r["name"] for r in required)
+    # Determine the new case's complexity weight.
+    if new_case_complexity:
+        new_weight = _complexity_weight(new_case_complexity)
+    else:
+        # Look up the category's baseline complexity from the DB.
+        cat_row = db.fetch_one(
+            "SELECT complexity FROM categories WHERE name=%s", (category,))
+        new_weight = _complexity_weight(cat_row["complexity"]) if cat_row else DEFAULT_WEIGHT
 
-    # 2. Candidate pool: active Resources who are Available.
+    # 1. Candidate pool: active Resources who are Available.
     candidates = db.fetch_all(
         """SELECT user_id, name, availability
            FROM users
            WHERE role = 'Resource' AND active = 1""")
 
-    # 3. Filter by availability + full skill match.
-    eligible = []
-    for c in candidates:
-        if c["availability"] != "Available":
-            continue
-        user_skill_ids = {r["skill_id"] for r in db.fetch_all(
-            "SELECT skill_id FROM user_skills WHERE user_id = %s", (c["user_id"],))}
-        if required_ids and not required_ids.issubset(user_skill_ids):
-            continue
-        eligible.append(c)
+    # 2. Filter by availability — only Available.
+    eligible = [c for c in candidates if c["availability"] == "Available"]
 
     if not eligible:
         return None  # Awaiting Assignment
 
-    # 4. Workload — fewest active cases
-    weighted = []
+    # 3. Calculate current workload score + projected score for each eligible.
+    scored = []
     for c in eligible:
-        weighted.append({
+        current = _active_workload_score(c["user_id"])
+        projected = current + new_weight
+        scored.append({
             "user_id": c["user_id"],
             "name": c["name"],
-            "workload": _active_workload(c["user_id"]),
+            "current_score": current,
+            "projected_score": projected,
+            "active_cases": _active_case_count(c["user_id"]),
             "last_assigned": _last_assigned_at(c["user_id"]),
         })
 
-    min_wl = min(w["workload"] for w in weighted)
-    tied = [w for w in weighted if w["workload"] == min_wl]
+    # 4. Select the Resource with the lowest projected workload score.
+    min_projected = min(s["projected_score"] for s in scored)
+    tied = [s for s in scored if s["projected_score"] == min_projected]
 
-    # 5. Round-robin — least-recently-assigned (None beats any timestamp)
-    def sort_key(w):
-        return (0, "") if w["last_assigned"] is None else (1, w["last_assigned"])
+    if len(tied) == 1:
+        chosen = tied[0]
+    else:
+        # Tie-breaker 1: fewest active cases
+        min_cases = min(s["active_cases"] for s in tied)
+        tied2 = [s for s in tied if s["active_cases"] == min_cases]
 
-    tied.sort(key=sort_key)
-    chosen = tied[0]
+        if len(tied2) == 1:
+            chosen = tied2[0]
+        else:
+            # Tie-breaker 2: least-recently-assigned (None beats any timestamp)
+            def sort_key(s):
+                return (0, "") if s["last_assigned"] is None else (1, s["last_assigned"])
+            tied2.sort(key=sort_key)
+            chosen = tied2[0]
 
-    skills_clause = (
-        f"matches required skills ({', '.join(required_names)})"
-        if required_names else
-        f"matches category '{category}' (no specific skills required)"
-    )
+    # Build a human-readable assignment reason.
+    complexity_label = {1: "Low", 2: "Medium", 3: "High"}.get(new_weight, "Medium")
     reason = (
-        f"Automatically assigned to {chosen['name']} — {skills_clause}, Available, "
-        f"lowest eligible active workload ({chosen['workload']} active case"
-        f"{'s' if chosen['workload'] != 1 else ''})"
-        + (", least-recently-assigned (round-robin)." if len(tied) > 1 else ".")
+        f"Assigned to {chosen['name']} because they were Available and had "
+        f"the lowest projected workload score ({chosen['projected_score']} = "
+        f"current {chosen['current_score']} + new {complexity_label}={new_weight})."
+        + (f" Tie broken by fewer active cases ({chosen['active_cases']})." if len(tied) > 1 else "")
+        + (f" Then by least-recently-assigned." if len(tied) > 1 and len(tied2) > 1 else "")
     )
+
     return {
         "user_id": chosen["user_id"],
         "name": chosen["name"],
         "reason": reason,
-        "method": "Automatic",
-        "required_skills": required_names,
+        "method": "Workload and Complexity Based",
+        "workload_score": chosen["current_score"],
+        "projected_score": chosen["projected_score"],
     }
 
 
-def assign_case(case_id, category, previous_assignee_id=None):
+def assign_case(case_id, category, previous_assignee_id=None, complexity=None):
     """Run the engine and persist the assignment for a given case.
 
     Sets cases.assigned_to + cases.assignment_status, inserts a
@@ -128,9 +154,11 @@ def assign_case(case_id, category, previous_assignee_id=None):
     `previous_assignee_id` is set when this is an automatic reassignment
     (e.g. the previous assignee became Unavailable); the method becomes
     'Automatic Reassignment'.
+    `complexity` overrides the category's baseline complexity for the new
+    case's weight (used when the case row already has a complexity value).
     """
-    decision = pick_assignee(category)
-    method = "Automatic Reassignment" if previous_assignee_id else "Automatic"
+    decision = pick_assignee(category, new_case_complexity=complexity)
+    method = "Automatic Reassignment" if previous_assignee_id else decision["method"] if decision else "Automatic"
 
     if decision is None:
         # Keep the case unassigned — Awaiting Assignment
@@ -138,15 +166,15 @@ def assign_case(case_id, category, previous_assignee_id=None):
             "UPDATE cases SET assigned_to=NULL, assignment_status='Awaiting Assignment' WHERE case_id=%s",
             (case_id,))
         audit_details = (
-            f"Case {case_id} (category={category}) — no eligible Available employee "
-            f"with matching skills; left Awaiting Assignment."
+            f"Case {case_id} (category={category}) — no Available Resource; "
+            f"left Awaiting Assignment."
         )
         db.execute(
             """INSERT INTO audit_logs
                (entity_type, entity_id, action, user_id, details, metadata_json)
                VALUES ('case', %s, 'assignment_awaiting', NULL, %s, %s)""",
             (case_id, audit_details,
-             '{"category": "%s", "reason": "no_eligible_employee"}' % category))
+             '{"category": "%s", "reason": "no_available_resource"}' % category))
         return None
 
     uid = decision["user_id"]
@@ -178,7 +206,8 @@ def assign_case(case_id, category, previous_assignee_id=None):
         (case_id,
          "case_auto_assigned" if not previous_assignee_id else "case_auto_reassigned",
          decision["reason"] + prev_note,
-         '{"assigned_to": %d, "method": "%s"}' % (uid, method)))
+         '{"assigned_to": %d, "method": "%s", "workload_score": %d, "projected_score": %d}'
+         % (uid, method, decision["workload_score"], decision["projected_score"])))
     return uid
 
 
@@ -187,11 +216,13 @@ def reassign_away_from(user_id):
     back through the engine. Preserves the previous assignment record.
     Returns the number of cases re-queued/reassigned."""
     cases = db.fetch_all(
-        """SELECT case_id, category FROM cases
+        """SELECT case_id, category, complexity FROM cases
            WHERE assigned_to = %s AND status NOT IN ('Completed')""",
         (user_id,))
     moved = 0
     for c in cases:
-        assign_case(c["case_id"], c["category"], previous_assignee_id=user_id)
+        assign_case(c["case_id"], c["category"],
+                    previous_assignee_id=user_id,
+                    complexity=c["complexity"])
         moved += 1
     return moved

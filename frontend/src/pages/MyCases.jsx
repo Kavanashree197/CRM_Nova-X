@@ -4,7 +4,6 @@ import { useAuth } from '../auth'
 import CaseTable from '../components/CaseTable'
 import CaseDetailDrawer from '../components/CaseDetailDrawer'
 import AvailabilityControl from '../components/AvailabilityControl'
-import MySkillsControl from '../components/MySkillsControl'
 import ClosedCasesTable from '../components/ClosedCasesTable'
 import { Loading } from '../components/Feedback'
 import { useNavigate } from 'react-router-dom'
@@ -55,9 +54,6 @@ export default function MyCases() {
 
       {/* Self-service availability control (hidden for Admin — they don't take cases) */}
       <AvailabilityControl />
-
-      {/* Self-service My Skills (Resources add new skills to their profile) */}
-      <MySkillsControl />
 
       <div className="grid" style={{ gridTemplateColumns: 'repeat(5, 1fr)' }}>
         <MiniStat label="Assigned to me" value={cases?.length ?? '—'} />

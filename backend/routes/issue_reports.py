@@ -241,8 +241,9 @@ def convert_to_case(report_id):
                     {"report_id": report_id, "reported_by": report["reported_by"]})
     audit.log_status_history(cid, None, "New", me["user_id"], "Case created from issue report")
 
-    # Automatic assignment
-    assigned_uid = assignment.assign_case(cid, category)
+    # Automatic assignment (workload + complexity based)
+    cat_cx = db.fetch_one("SELECT complexity FROM categories WHERE name=%s", (category,))
+    assigned_uid = assignment.assign_case(cid, category, complexity=cat_cx["complexity"] if cat_cx else None)
 
     # Update the report
     closed_at_expr = "datetime('now')" if db.config.DB_TYPE == "sqlite" else "CURRENT_TIMESTAMP"
