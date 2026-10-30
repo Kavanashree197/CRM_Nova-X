@@ -8,7 +8,11 @@ import {
 
 const NAV = [
   { to: '/', label: 'Overview', icon: IconDashboard, roles: ['Admin', 'Team Lead', 'Resource'] },
-  { to: '/my-cases', label: 'My Cases', icon: IconBriefcase, roles: ['Admin', 'Team Lead', 'Resource'] },
+  // "My Cases" is the personal workload view — only Resources are assigned cases
+  // (the assignment engine never assigns to Admins or Team Leads), so this nav
+  // item is hidden for them. Admin + Team Lead see organization/team-wide cases
+  // through "All Cases".
+  { to: '/my-cases', label: 'My Cases', icon: IconBriefcase, roles: ['Resource'] },
   { to: '/all-cases', label: 'All Cases', icon: IconList, roles: ['Admin', 'Team Lead', 'Resource'] },
   { to: '/create-case', label: 'Create Case', icon: IconPlus, roles: ['Admin', 'Team Lead', 'Resource'] },
   { to: '/activity-logs', label: 'Activity Logs', icon: IconActivity, roles: ['Admin', 'Team Lead', 'Resource'] },

@@ -33,7 +33,7 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/"             element={<RequireAuth><Overview /></RequireAuth>} />
-      <Route path="/my-cases"     element={<RequireAuth><MyCases /></RequireAuth>} />
+      <Route path="/my-cases"     element={<RequireRole roles={['Resource']}><MyCases /></RequireRole>} />
       <Route path="/all-cases"    element={<RequireAuth><AllCases /></RequireAuth>} />
       <Route path="/create-case"  element={<RequireAuth><CreateCase /></RequireAuth>} />
       <Route path="/activity-logs" element={<RequireAuth><ActivityLogs /></RequireAuth>} />

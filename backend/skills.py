@@ -111,6 +111,45 @@ def set_user_skills(user_id: int, skill_names: list[str]) -> list[str]:
     return stored
 
 
+def add_user_skill(user_id: int, skill_name: str) -> tuple[str, bool]:
+    """Add ONE skill to a user's profile (additive, does not wipe others).
+    Resolves the name through the catalog (alias-aware) and auto-creates the
+    skill row if it doesn't exist — so an employee can self-add a brand-new
+    skill like 'Rust'. Returns (canonical_name, created_skill_bool).
+    Raises ValueError on empty/invalid name."""
+    name = (skill_name or "").strip()
+    if not name:
+        raise ValueError("Skill name is required")
+    # Resolve or auto-create. get_or_create_skill returns the existing id
+    # if the name or any alias already exists (no duplicates).
+    pre = resolve_skill(name)
+    sid = get_or_create_skill(name)
+    created_skill = pre is None  # True if this skill didn't exist before
+    try:
+        db.execute(
+            "INSERT INTO user_skills (user_id, skill_id) VALUES (%s, %s)",
+            (user_id, sid))
+    except Exception:
+        # Already linked to this user — that's fine, treat as success.
+        pass
+    canonical = db.fetch_one("SELECT name FROM skills WHERE skill_id=%s", (sid,))["name"]
+    return canonical, created_skill
+
+
+def remove_user_skill(user_id: int, skill_name: str) -> str | None:
+    """Remove ONE skill from a user's profile by canonical name or alias.
+    Returns the canonical name removed, or None if the user didn't have it.
+    Never deletes the skill from the catalog (other employees may have it)."""
+    sid = resolve_skill(skill_name)
+    if not sid:
+        return None
+    canonical = db.fetch_one("SELECT name FROM skills WHERE skill_id=%s", (sid,))["name"]
+    db.execute(
+        "DELETE FROM user_skills WHERE user_id = %s AND skill_id = %s",
+        (user_id, sid))
+    return canonical
+
+
 def category_required_skills(category_name: str) -> list[str]:
     """The skill names a case of the given category requires."""
     return [r["name"] for r in db.fetch_all(
