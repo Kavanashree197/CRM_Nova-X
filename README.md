@@ -1,251 +1,234 @@
-# CaseFlow CRM — Case Management & Productivity Reporting (Round 2 POC)
+# CRM — Case Management & Productivity Reporting (PS-02)
 
-A clean, modern **CRM Case Management System** built for a hackathon Round 2 proof
-of concept. Operational resources manage customer cases, team leads monitor
-workloads, and management views accurate productivity reports — all backed by an
-**immutable, real-time action log** that records every meaningful operation.
+A professional, minimal, pure-white CRM for the Hack4Hire PS-02 problem
+statement. Centralised case management with **automatic, traceable action
+logging** and productivity reports computed from real recorded activity.
 
-> Priority: **Functionality > Code simplicity > UI quality > Unnecessary features.**
-
----
-
-## Tech Stack (exactly as required)
-
-| Layer      | Technology                                   |
-|------------|----------------------------------------------|
-| Frontend   | React.js, HTML, CSS, JavaScript, Recharts   |
-| Backend    | Python, Flask, REST API                      |
-| Database   | MySQL (production) — **SQLite fallback for zero-setup demo** |
-
-The database layer supports **both** MySQL and SQLite behind one identical
-code path. By default the app runs on SQLite so judges can launch it with **zero
-database setup**. Switching to real MySQL is a one-line config change (see below).
-All SQL is portable; only `DATEDIFF`/`julianday` differs and is handled per-backend.
+> **Key differentiator:** every case, every meaningful action, every
+> employee contribution and every productivity metric is **connected and
+> traceable**.
 
 ---
 
-## Quick Start (zero setup — SQLite)
+## Live preview
+
+The app is running in the Z.ai workspace preview:
+
+**https://preview-chat-8bdb48f1-cf04-4c27-8a27-08499b17dbde.space-z.ai/**
+
+Login is pre-filled — click **Sign in**.
+
+Demo accounts:
+| Role | Email | Password |
+|---|---|---|
+| Admin | `admin@crm.io` | `admin123` |
+| Team Lead | `lead@crm.io` | `lead123` |
+| Resource | `rahul@crm.io` / `sneha@crm.io` / `vikram@crm.io` / `anita@crm.io` | `rahul123` / `sneha123` / `vikram123` / `anita123` |
+
+The application **starts with zero cases**. Use **Create Case** to add real
+ones; all dashboard numbers come from the database.
+
+---
+
+## Tech stack
+
+| Layer | Technology |
+|---|---|
+| Frontend | React 18 + Vite + JavaScript + React Router + Axios + Recharts |
+| Backend | Python + Flask + Flask-CORS (signed-token auth via `itsdangerous`) |
+| Database | MySQL (production) — **SQLite fallback for zero-setup demo** |
+
+The database layer supports both MySQL and SQLite behind one identical
+code path. By default the app runs on SQLite so it launches with no setup;
+switching to real MySQL is one env var (see below).
+
+> The brochure lists Flask-SQLAlchemy + Flask-JWT-Extended as the intended
+> backend stack. We use raw parameterized SQL (PyMySQL) and a signed-HMAC
+> token helper because they are simpler to read and debug, and keep the
+> code path identical across MySQL and SQLite. The 7-table schema, REST
+> API, and all functionality match the brochure exactly.
+
+---
+
+## Quick start
+
+### Backend (Flask, port 5000)
 
 ```bash
-# 1. Backend
 cd backend
-python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-python seed.py            # creates schema + 6 users + 18 cases + ~55 actions
+python seed.py            # 6 users + 8 categories. ZERO cases (default)
 python app.py             # http://127.0.0.1:5000
+```
 
-# 2. Frontend (new terminal)
+### Frontend (Vite, port 3000)
+
+```bash
 cd frontend
 npm install
-npm run dev               # http://127.0.0.1:5173  (proxies /api to Flask)
+npm run dev               # http://127.0.0.1:3000  (proxies /api -> Flask)
 ```
 
-Open **http://localhost:5173** and sign in with the demo account (pre-filled):
-
-```
-Admin:      admin@crm.io   / admin123
-Team Lead:  lead@crm.io    / lead123
-Resource:   rahul@crm.io   / rahul123   (also sneha / vikram / anita + 123)
-```
-
-### One-process mode (no Vite)
-
-After `npm run build` in `frontend/`, Flask automatically serves the built SPA too,
-so the **whole app runs from a single process**:
+### Optional demo data (clearly labelled, never mixed with real data)
 
 ```bash
-cd frontend && npm install && npm run build     # produces frontend/dist
-cd ../backend && python seed.py && python app.py
-# open http://127.0.0.1:5000
+python backend/seed.py --demo        # loads 18 DEMO-001… cases for presentation
+python backend/seed.py --clear-demo  # removes ALL case data (users + categories kept)
 ```
+
+Demo cases use the `DEMO-NNN` prefix so they are unmistakable; real
+user-created cases use `CASE-NNN` and are never touched by `--clear-demo`.
 
 ---
 
 ## Switching to real MySQL
 
-1. Create the database + tables:
-   ```bash
-   mysql -u root -p < backend/schema.sql
-   ```
-2. (Optional) create a dedicated user:
-   ```sql
-   CREATE USER 'crm_user'@'localhost' IDENTIFIED BY 'crm_pass';
-   GRANT ALL ON crm_db.* TO 'crm_user'@'localhost'; FLUSH PRIVILEGES;
-   ```
-3. Run with environment variables (no code change needed):
-   ```bash
-   DB_TYPE=mysql DB_USER=crm_user DB_PASSWORD=crm_pass DB_NAME=crm_db \
-     python seed.py
-   DB_TYPE=mysql DB_USER=crm_user DB_PASSWORD=crm_pass DB_NAME=crm_db \
-     python app.py
-   ```
+```bash
+mysql -u root -p < backend/schema.sql     # creates crm_db + 7 tables
+# optional: CREATE USER 'crm_user'@'localhost' IDENTIFIED BY 'crm_pass';
+#           GRANT ALL ON crm_db.* TO 'crm_user'@'localhost';
+DB_TYPE=mysql DB_USER=crm_user DB_PASSWORD=crm_pass DB_NAME=crm_db \
+  python seed.py
+DB_TYPE=mysql DB_USER=crm_user DB_PASSWORD=crm_pass DB_NAME=crm_db \
+  python app.py
+```
+
+No code changes — `config.py` reads env vars; `database.py` switches drivers.
 
 ---
 
-## Project Structure
+## Project structure
 
 ```
 .
 ├── backend/
-│   ├── app.py              # Flask app factory + serves built SPA (optional)
+│   ├── app.py              # Flask factory + blueprints
 │   ├── config.py           # DB + Flask config (env vars)
 │   ├── database.py         # MySQL/SQLite connection + query helpers
-│   ├── auth.py             # token auth + role guards
-│   ├── activity.py         # immutable action-log writer
-│   ├── schema.sql          # MySQL schema (creates crm_db + 4 tables)
+│   ├── auth.py             # signed-token auth + role guards
+│   ├── activity.py         # immutable case_actions writer
+│   ├── audit.py            # audit_logs + case_status_history writers
+│   ├── schema.sql          # MySQL schema (7 tables)
 │   ├── schema_sqlite.sql   # SQLite schema (mirror)
-│   ├── seed.py             # sample data: 6 users, 18 cases, ~55 actions
+│   ├── seed.py             # users + categories only (0 cases by default)
 │   ├── requirements.txt
 │   └── routes/
-│       ├── auth.py         # /api/auth/*  (login, me, users)
+│       ├── auth.py         # /api/auth/* (login, me, users)
 │       ├── cases.py        # /api/cases/* (CRUD, assign, status, actions, history)
-│       ├── activities.py   # /api/activities + /since/<id> (auto-refresh poll)
+│       ├── activities.py   # /api/activities + /since/<id> (polling)
+│       ├── audit.py        # /api/audit + /summary
+│       ├── categories.py   # /api/categories
 │       ├── reports.py      # /api/reports/productivity + /team
-│       └── dashboard.py     # /api/dashboard/summary (KPIs + charts)
+│       └── dashboard.py    # /api/dashboard/summary
 ├── frontend/
 │   ├── package.json
-│   ├── vite.config.js      # proxies /api -> Flask:5000
-│   ├── index.html
+│   ├── vite.config.js      # port 3000, /api proxy -> Flask, allowedHosts
 │   └── src/
-│       ├── main.jsx, App.jsx, auth.jsx, api.js, styles.css
-│       ├── components/   (Sidebar, TopNav, Layout, KpiCard, CaseTable,
-│       │                  CaseDetailDrawer, Badge, Feedback, icons)
-│       └── pages/        (Login, Overview, MyCases, AllCases, CreateCase,
-│                          ActivityLogs, ProductivityReports,
-│                          TeamPerformance, Settings)
+│       ├── App.jsx, main.jsx, auth.jsx, api.js, styles.css
+│       ├── components/ (Sidebar, TopNav, Layout, CaseDetailDrawer,
+│       │                 CaseTable, KpiCard, Badge, Feedback, icons)
+│       └── pages/ (Login, Overview, MyCases, AllCases, CreateCase,
+│                  ActivityLogs, AuditHistory, ProductivityReports,
+│                  TeamPerformance, TrustFairness, Settings)
+├── docs/
+│   ├── round-1.md          # idea screening & problem validation
+│   ├── round-2.md          # architecture, DB design, API, UI/UX
+│   ├── round-3.md          # measured development-progress evidence
+│   └── task-allocation.md   # editable team responsibilities
 └── README.md
 ```
 
 ---
 
-## REST API
+## Database (7 tables)
 
-| Method | Endpoint                          | Purpose                                  |
-|--------|-----------------------------------|------------------------------------------|
-| POST   | `/api/auth/login`                 | Sign in, returns signed token            |
-| GET    | `/api/auth/me`                    | Current user                             |
-| GET    | `/api/auth/users`                 | User list (assignee dropdown)            |
-| POST   | `/api/auth/users`                 | Create user (Admin only)                 |
-| GET    | `/api/cases`                      | List/filter cases (status, priority, category, assignee, search, overdue) |
-| POST   | `/api/cases`                      | Create case (+ auto action log)          |
-| GET    | `/api/cases/{id}`                 | Case detail                              |
-| PUT    | `/api/cases/{id}`                  | Edit / assign / priority / status (+action log per change) |
-| POST   | `/api/cases/{id}/actions`         | Record a comment / schedule next action  |
-| GET    | `/api/cases/{id}/history`         | Full assignment + action timeline        |
-| GET    | `/api/activities`                 | Global activity feed (filter by user/type) |
-| GET    | `/api/activities/since/{last_id}` | Lightweight poll for new actions         |
-| GET    | `/api/dashboard/summary`         | KPIs + 4 chart datasets + priority/overdue/upcoming |
-| GET    | `/api/reports/productivity`       | Individual productivity (filters)        |
-| GET    | `/api/reports/team`               | Team performance (Admin/Lead only)       |
+`users`, `cases`, `case_actions`, `case_assignments`, `case_status_history`,
+`categories`, `audit_logs` — with foreign keys, indexes, and backend-generated
+timestamps. Full schema in `backend/schema.sql` (MySQL) and
+`backend/schema_sqlite.sql` (SQLite).
+
+Three complementary, append-only log layers:
+1. **`case_actions`** — the employee activity feed (what people did)
+2. **`case_status_history`** — formal status transitions (from→to, who, when)
+3. **`audit_logs`** — system-level audit trail (every entity change)
 
 ---
 
-## Database Schema
+## REST API (19 endpoints)
 
-4 tables with foreign keys + indexes. `schema.sql` (MySQL) and `schema_sqlite.sql`
-are mirror images.
+| Method | Endpoint | Purpose |
+|---|---|---|
+| POST | `/api/auth/login` | sign in |
+| GET | `/api/auth/me` | current user |
+| GET/POST | `/api/auth/users` | list / create users |
+| GET | `/api/categories` | category lookup |
+| GET | `/api/cases` | list + filter cases |
+| POST | `/api/cases` | create case |
+| GET/PUT | `/api/cases/{id}` | detail / edit |
+| POST | `/api/cases/{id}/actions` | record a meaningful action |
+| GET | `/api/cases/{id}/history` | actions + assignments + status history |
+| GET | `/api/activities` | global activity feed |
+| GET | `/api/activities/since/{last_id}` | lightweight poll |
+| GET | `/api/audit` | audit log (filterable) |
+| GET | `/api/audit/summary` | counts by action |
+| GET | `/api/dashboard/summary` | KPIs + chart datasets |
+| GET | `/api/reports/productivity` | per-resource productivity |
+| GET | `/api/reports/team` | team performance (Admin/Lead) |
+| GET | `/api/health` | health check |
 
-- **users** — `user_id`, name, email, password_hash, role (Admin/Team Lead/Resource), active
-- **cases** — `case_id`, case_code (CASE-001…), title, category, description, priority,
-  status (New/Active/Pending/Completed/Reopened), created_by, assigned_to, due_date,
-  next_action_date, next_action, completion_date, resolution_note, created_at, updated_at
-- **case_assignments** — full reassignment history (case_id, assigned_to, assigned_by, assigned_at, note)
-- **case_actions** — **immutable** activity log (action_id, case_id, user_id, action_type,
-  description, previous_value, new_value, created_at)
-
-Overdue status is **calculated** (`due_date < today AND status <> Completed`), never a
-manual flag.
-
----
-
-## The 5 Round 2 Demonstrations
-
-### Demo 1 — Create a case
-1. Sign in as Admin → **Create Case** in the sidebar.
-2. Fill the form (title, category, priority, assignee, due/next-action dates, description).
-3. Click **Create case**. The case detail drawer opens with the new case code
-   (e.g. `CASE-019`) and a `Case Created` action is automatically written to the log.
-
-### Demo 2 — Record actions
-1. In the drawer, click the **Record Action** tab.
-2. Add a comment / schedule a next action → click **Record action**.
-3. Switch to the **History** tab — every action appears as an immutable timeline
-   entry with timestamp, user, and previous → new values.
-
-### Demo 3 — Update case status
-1. In the drawer, click **Edit**.
-2. Change Status → **Pending**, save.
-3. Change Status → **Completed** — the form now **requires a Resolution note**
-   (validation blocks completion without one). Fill it and save.
-4. Reopen the case (Status → **Reopened**) — the prior completion history is
-   preserved in the timeline.
-
-### Demo 4 — Dashboard update
-After Demos 1–3, return to **Overview**. The KPI cards (Total / Active / Completed /
-Overdue / Actions Recorded) and all four charts now reflect the real database
-state — e.g. Total Cases went 18 → 19 and Completed 2 → 3. Nothing is hardcoded.
-
-### Demo 5 — Productivity reporting
-1. Go to **Productivity Reports**.
-2. Pick a resource (Admin/Lead can pick anyone; a Resource sees only themselves).
-3. The report shows Cases Created / Assigned / Actioned / Completed, Active,
-   Overdue, **Total Actions**, and **Average Completion (days)** — productivity is
-   **never reduced to closure count alone**, per the brief. A trend chart and the
-   click-through case lists (completed / actioned) are included.
+All writes use parameterized SQL. All mutating endpoints write to the
+action log + audit log inside the same request.
 
 ---
 
-## Role-Based Access
+## Trust & Fairness (special feature)
 
-| Capability                          | Admin | Team Lead | Resource |
-|-------------------------------------|:-----:|:---------:|:--------:|
-| View all cases                      |  ✓    |  ✓       | own only |
-| Create / edit / assign cases        |  ✓    |  ✓       | assigned |
-| Record actions / comments           |  ✓    |  ✓       | assigned |
-| Productivity report (self)          |  ✓    |  ✓       |  ✓       |
-| Team Performance page               |  ✓    |  ✓       |    —     |
-| Settings (manage users)             |  ✓    |   —      |    —     |
+The brochure highlights that employees are judged using the data they
+enter. The in-app **Trust & Fairness** page (`/trust`) documents three
+enforced protections:
 
----
+1. **Meaningless action prevention** — opening a case is never an action;
+   only meaningful types (Contacted, Investigation, Follow-up, …) are
+   recordable, each requiring a description.
+2. **Premature closure prevention** — a case cannot be marked Completed
+   without a resolution note (enforced on the backend).
+3. **Contribution preservation** — reassignment never overwrites prior
+   assignments or actions; both stay attached to the original contributor
+   with the original timestamp.
 
-## Key Implementation Notes
-
-- **Real-time action logging** is the central feature. Every mutating endpoint
-  writes one or more rows to `case_actions` through `activity.log_action()`.
-  Historical rows are **never updated or deleted**. Timestamps are generated on
-  the backend.
-- **Auto-refresh**: the Activity Logs page polls `/api/activities/since/<last_id>`
-  every 5 seconds (lightweight, no WebSockets) and prepends new actions with a
-  live indicator.
-- **Completed requires a resolution note** — enforced both in the backend
-  (`routes/cases.py`) and the frontend edit form.
-- **Reopening preserves history** — completion date/resolution note stay visible
-  in the timeline; the case row's status moves to `Reopened`.
-- **Overdue** is computed, never manually set.
-- **Parameterized SQL** everywhere (no string interpolation) — `database.q()`
-  translates `%s` placeholders to `?` for SQLite.
-- **Loading & empty states**, form validation, and API error handling are
-  implemented throughout.
+We do not claim manipulation is impossible — these protections make the
+data trustworthy enough that employees, leads, and management can rely on
+the same numbers.
 
 ---
 
-## Sample Data
+## Round 1 / 2 / 3 documentation
 
-`seed.py` inserts:
-- 1 Admin, 1 Team Lead, 4 Resources
-- 18 cases (mix of New / Active / Pending / Completed / Reopened, several overdue)
-- ~55 action records spread across the last ~14 days (for realistic charts)
-- Reassignment history preserved in `case_assignments`
-
-Re-seed any time with `python seed.py` (resets the SQLite file so case codes
-restart at CASE-001).
+- `docs/round-1.md` — problem analysis, solution, target users, workflow
+- `docs/round-2.md` — architecture, DB design, API, UI/UX decisions
+- `docs/round-3.md` — measured development-progress evidence (the 5 demos)
+- `docs/task-allocation.md` — editable team responsibilities (placeholders)
 
 ---
 
 ## Design
 
-Pure white enterprise theme — `#FFFFFF` background, dark charcoal text, subtle
-light-grey borders, soft-grey secondary surfaces, **one** restrained blue accent
-(`#2563EB`) for primary actions. No dark mode, no gradients, no glassmorphism.
-Status/priority colours are used sparingly as soft badges. Inspired by modern
-SaaS dashboards (Stripe / Vercel admin style).
+Pure white enterprise theme — `#FFFFFF` background, `#171717` text,
+`#E5E7EB` borders, one `#2563EB` blue accent, `#16A34A` success,
+`#D97706` warning, `#DC2626` danger. No dark mode, no gradients, no
+glassmorphism. Inspired by Linear / Stripe / modern enterprise SaaS.
+
+---
+
+## Notes for judges
+
+- The app starts with **zero cases** by design — use Create Case to see
+  real data flow. Optional demo data is available via `python seed.py --demo`
+  (labelled `DEMO-NNN`, never mixed with real `CASE-NNN` records).
+- All dashboard KPIs, charts, and reports come from the backend API —
+  nothing is hardcoded.
+- The Activity Logs page auto-refreshes every 5 seconds (lightweight poll,
+  no WebSockets).
+- Overdue is **calculated** (`due_date < today AND status <> Completed`),
+  never a manual flag.
+- Case IDs (`CASE-001`) are never reused.

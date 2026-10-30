@@ -31,9 +31,11 @@ export default function Login() {
   return (
     <div className="login-shell">
       <form className="login-card" onSubmit={submit}>
-        <div className="login-logo">CF</div>
-        <div className="login-title">CaseFlow CRM</div>
-        <div className="login-sub">Sign in to your workspace</div>
+        <div className="login-logo">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+        </div>
+        <div className="login-title">CRM</div>
+        <div className="login-sub">Case Management & Productivity</div>
         {err && <div style={{ background: 'var(--st-reopened-bg)', color: 'var(--st-reopened)', padding: 10, borderRadius: 8, fontSize: 13, marginBottom: 12, border: '1px solid #FECACA' }}>{err}</div>}
         <div className="field" style={{ marginBottom: 12 }}>
           <label className="lbl">Email</label>

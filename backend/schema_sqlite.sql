@@ -58,3 +58,45 @@ CREATE TABLE IF NOT EXISTS case_actions (
 CREATE INDEX IF NOT EXISTS idx_action_case ON case_actions(case_id);
 CREATE INDEX IF NOT EXISTS idx_action_user ON case_actions(user_id);
 CREATE INDEX IF NOT EXISTS idx_action_time ON case_actions(created_at);
+
+-- ----------------------------------------------------------------------------
+-- case_status_history - formal status transition log (one row per change)
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS case_status_history (
+    history_id    INTEGER PRIMARY KEY AUTOINCREMENT,
+    case_id       INTEGER NOT NULL REFERENCES cases(case_id) ON DELETE CASCADE,
+    from_status   TEXT,
+    to_status     TEXT NOT NULL,
+    changed_by    INTEGER NOT NULL REFERENCES users(user_id),
+    note          TEXT,
+    changed_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_status_history_case ON case_status_history(case_id);
+
+-- ----------------------------------------------------------------------------
+-- categories - lookup table for case categories (PS-02 Round 2 requirement)
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS categories (
+    category_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    name          TEXT NOT NULL UNIQUE,
+    description   TEXT,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- ----------------------------------------------------------------------------
+-- audit_logs - system-level audit trail for every meaningful entity change
+-- (distinct from case_actions, which is the employee activity feed)
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS audit_logs (
+    audit_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_type   TEXT NOT NULL,        -- e.g. 'case', 'assignment', 'action'
+    entity_id     INTEGER,
+    action        TEXT NOT NULL,         -- e.g. 'case_created', 'status_changed'
+    user_id       INTEGER REFERENCES users(user_id),
+    details       TEXT,                  -- human-readable summary
+    metadata_json TEXT,                  -- optional key/value snapshot (JSON string)
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_logs(entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS idx_audit_time ON audit_logs(created_at);
+

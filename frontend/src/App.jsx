@@ -8,8 +8,10 @@ import MyCases from './pages/MyCases'
 import AllCases from './pages/AllCases'
 import CreateCase from './pages/CreateCase'
 import ActivityLogs from './pages/ActivityLogs'
+import AuditHistory from './pages/AuditHistory'
 import ProductivityReports from './pages/ProductivityReports'
 import TeamPerformance from './pages/TeamPerformance'
+import TrustFairness from './pages/TrustFairness'
 import Settings from './pages/Settings'
 
 function RequireAuth({ children }) {
@@ -35,8 +37,10 @@ export default function App() {
       <Route path="/all-cases"    element={<RequireAuth><AllCases /></RequireAuth>} />
       <Route path="/create-case"  element={<RequireAuth><CreateCase /></RequireAuth>} />
       <Route path="/activity-logs" element={<RequireAuth><ActivityLogs /></RequireAuth>} />
+      <Route path="/audit"        element={<RequireAuth><AuditHistory /></RequireAuth>} />
       <Route path="/reports"      element={<RequireAuth><ProductivityReports /></RequireAuth>} />
       <Route path="/team"         element={<RequireRole roles={['Admin','Team Lead']}><TeamPerformance /></RequireRole>} />
+      <Route path="/trust"        element={<RequireAuth><TrustFairness /></RequireAuth>} />
       <Route path="/settings"     element={<RequireRole roles={['Admin']}><Settings /></RequireRole>} />
       <Route path="*"             element={<Navigate to="/" replace />} />
     </Routes>

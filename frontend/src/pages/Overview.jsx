@@ -10,11 +10,11 @@ import {
   ResponsiveContainer, BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, Area, AreaChart,
 } from 'recharts'
-import { IconActivity, IconRefresh } from '../components/icons'
+import { IconActivity, IconRefresh, IconLayers } from '../components/icons'
 
 const STATUS_COLORS = {
-  New: '#4F46E5', Active: '#2563EB', Pending: '#B45309',
-  Completed: '#047857', Reopened: '#B91C1C',
+  New: '#2563EB', Active: '#2563EB', Pending: '#D97706',
+  Completed: '#16A34A', Reopened: '#DC2626',
 }
 const today = () => new Date().toISOString().slice(0, 10)
 
@@ -39,6 +39,7 @@ export default function Overview() {
 
   const k = data.kpis
   const statusData = Object.entries(data.status_distribution).map(([name, v]) => ({ name, value: v, color: STATUS_COLORS[name] }))
+  const isEmpty = k.is_empty || k.total_cases === 0
 
   return (
     <div>
@@ -50,6 +51,19 @@ export default function Overview() {
         <button className="btn" onClick={load}><IconRefresh size={16} /> Refresh</button>
       </div>
 
+      {isEmpty && (
+        <div className="card card-pad" style={{ textAlign: 'center', padding: '48px 24px' }}>
+          <div className="kpi-ic" style={{ background: 'var(--accent-soft)', color: 'var(--accent)', width: 52, height: 52, margin: '0 auto 14px', float: 'none' }}>
+            <IconLayers size={26} />
+          </div>
+          <div style={{ fontSize: 18, fontWeight: 600 }}>No cases have been created yet</div>
+          <div className="text-sm muted" style={{ marginTop: 6, marginBottom: 18 }}>
+            Create your first case to start tracking activity and productivity.
+          </div>
+          <button className="btn btn-primary" onClick={() => nav('/create-case')}>+ Create your first case</button>
+        </div>
+      )}
+
       {/* KPI cards */}
       <div className="grid kpi-grid">
         <KpiCard kind="total"     value={k.total_cases} />
@@ -59,6 +73,8 @@ export default function Overview() {
         <KpiCard kind="actions"    value={k.total_actions} foot="recorded" />
       </div>
 
+      {!isEmpty && (
+        <>
       {/* Charts row 1 */}
       <div className="grid charts-grid mt-24">
         <div className="card">
@@ -262,6 +278,8 @@ export default function Overview() {
               })}
         </div>
       </div>
+        </>
+      )}
 
       {openId && <CaseDetailDrawer caseId={openId} onClose={() => setOpenId(null)} onChanged={load} />}
     </div>

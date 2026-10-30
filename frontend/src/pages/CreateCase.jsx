@@ -5,22 +5,29 @@ import { useToast } from '../components/Layout'
 import CaseDetailDrawer from '../components/CaseDetailDrawer'
 import { IconCheck } from '../components/icons'
 
-const CATEGORIES = ['Billing', 'Technical Support', 'Account Access', 'Onboarding', 'Feature Request', 'Bug Report', 'Data Migration', 'Compliance']
 const PRIORITIES = ['Low', 'Medium', 'High', 'Critical']
 
 export default function CreateCase() {
   const nav = useNavigate()
   const toast = useToast()
   const [users, setUsers] = useState([])
+  const [categories, setCategories] = useState([])
   const [saving, setSaving] = useState(false)
   const [createdId, setCreatedId] = useState(null)
   const [f, setF] = useState({
-    title: '', category: 'Billing', description: '', priority: 'Medium',
+    title: '', category: '', description: '', priority: 'Medium',
     assigned_to: '', due_date: '', next_action_date: '', next_action: '',
   })
   const [err, setErr] = useState({})
 
-  useEffect(() => { apiGet('/api/auth/users').then(d => setUsers(d.users || [])) }, [])
+  useEffect(() => {
+    apiGet('/api/auth/users').then(d => setUsers(d.users || []))
+    apiGet('/api/categories').then(d => {
+      const cats = (d.categories || []).map(c => c.name)
+      setCategories(cats)
+      if (cats.length && !f.category) setF(s => ({ ...s, category: cats[0] }))
+    })
+  }, []) // eslint-disable-line
 
   const set = (k, v) => setF(s => ({ ...s, [k]: v }))
 
@@ -67,7 +74,7 @@ export default function CreateCase() {
           <div className="field">
             <label className="lbl">Category</label>
             <select className="inp" value={f.category} onChange={e => set('category', e.target.value)}>
-              {CATEGORIES.map(x => <option key={x}>{x}</option>)}
+              {categories.map(x => <option key={x}>{x}</option>)}
             </select>
           </div>
           <div className="field">

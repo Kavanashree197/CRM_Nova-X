@@ -1,41 +1,41 @@
 /* ============================================================================
-   CaseFlow CRM — Pure White Enterprise Theme
+   CRM — Pure White Enterprise Theme
    No gradients, no dark mode, no glassmorphism. One restrained blue accent.
    ============================================================================ */
 :root {
   --bg:            #FFFFFF;
   --surface:       #FFFFFF;
-  --surface-2:     #F9FAFB;
-  --surface-3:     #F3F4F6;
+  --surface-2:     #FAFAFA;
+  --surface-3:     #F5F5F5;
   --border:        #E5E7EB;
   --border-strong: #D1D5DB;
 
-  --text:          #1F2937;   /* dark charcoal */
-  --text-2:        #4B5563;
-  --text-3:        #6B7280;
-  --text-4:        #9CA3AF;
+  --text:          #171717;   /* primary text — spec */
+  --text-2:        #404040;
+  --text-3:        #737373;   /* secondary text — spec */
+  --text-4:        #A3A3A3;
 
-  --accent:        #2563EB;   /* primary blue */
+  --accent:        #2563EB;   /* primary button — spec */
   --accent-hover:  #1D4ED8;
   --accent-soft:   #EFF6FF;
 
   /* status colors (restrained, used as text + soft bg) */
-  --st-new:        #4F46E5;
-  --st-new-bg:     #EEF2FF;
+  --st-new:        #2563EB;
+  --st-new-bg:     #EFF6FF;
   --st-active:     #2563EB;
   --st-active-bg:  #EFF6FF;
-  --st-pending:    #B45309;
+  --st-pending:    #D97706;   /* warning — spec */
   --st-pending-bg: #FFFBEB;
-  --st-done:       #047857;
-  --st-done-bg:    #ECFDF5;
-  --st-reopened:   #B91C1C;
+  --st-done:       #16A34A;   /* success — spec */
+  --st-done-bg:    #F0FDF4;
+  --st-reopened:   #DC2626;   /* danger — spec */
   --st-reopened-bg:#FEF2F2;
-  --overdue:       #DC2626;
+  --overdue:       #DC2626;   /* danger — spec */
 
-  --pri-low:       #6B7280;  --pri-low-bg:    #F3F4F6;
-  --pri-med:       #B45309;  --pri-med-bg:    #FFFBEB;
-  --pri-high:      #C2410C;  --pri-high-bg:   #FFF7ED;
-  --pri-crit:      #B91C1C;  --pri-crit-bg:   #FEF2F2;
+  --pri-low:       #737373;  --pri-low-bg:    #F5F5F5;
+  --pri-med:       #D97706;  --pri-med-bg:    #FFFBEB;
+  --pri-high:      #D97706;  --pri-high-bg:   #FFFBEB;
+  --pri-crit:      #DC2626;  --pri-crit-bg:   #FEF2F2;
 
   --shadow-sm: 0 1px 2px rgba(16,24,40,.04);
   --shadow:    0 1px 3px rgba(16,24,40,.06), 0 1px 2px rgba(16,24,40,.04);
@@ -82,8 +82,8 @@ h1,h2,h3,h4 { margin: 0; font-weight: 600; color: var(--text); letter-spacing: -
 }
 .brand { display: flex; align-items: center; gap: 10px; padding: 18px 18px 16px; border-bottom: 1px solid var(--border); }
 .brand-logo { width: 30px; height: 30px; border-radius: 8px; background: var(--accent); display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 14px; }
-.brand-name { font-weight: 600; font-size: 15px; }
-.brand-name span { color: var(--accent); }
+.brand-name { font-weight: 600; font-size: 15px; letter-spacing: 0.02em; }
+/* (legacy span rule removed — CRM wordmark has no accent split) */
 .nav { padding: 12px 10px; display: flex; flex-direction: column; gap: 2px; flex: 1; overflow-y: auto; }
 .nav-section { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-4); padding: 12px 10px 6px; font-weight: 600; }
 .nav-item {

@@ -86,3 +86,47 @@ CREATE TABLE case_actions (
     INDEX idx_action_user (user_id),
     INDEX idx_action_time (created_at)
 ) ENGINE=InnoDB;
+
+-- ----------------------------------------------------------------------------
+-- case_status_history - formal status transition log (one row per change)
+-- ----------------------------------------------------------------------------
+CREATE TABLE case_status_history (
+    history_id    INT AUTO_INCREMENT PRIMARY KEY,
+    case_id       INT NOT NULL,
+    from_status   VARCHAR(30) NULL,
+    to_status     VARCHAR(30) NOT NULL,
+    changed_by    INT NOT NULL,
+    note          VARCHAR(255) NULL,
+    changed_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_status_case  FOREIGN KEY (case_id)    REFERENCES cases(case_id) ON DELETE CASCADE,
+    CONSTRAINT fk_status_user  FOREIGN KEY (changed_by) REFERENCES users(user_id),
+    INDEX idx_status_case (case_id)
+) ENGINE=InnoDB;
+
+-- ----------------------------------------------------------------------------
+-- categories - lookup table for case categories (PS-02 Round 2 requirement)
+-- ----------------------------------------------------------------------------
+CREATE TABLE categories (
+    category_id   INT AUTO_INCREMENT PRIMARY KEY,
+    name          VARCHAR(50) NOT NULL UNIQUE,
+    description   VARCHAR(255) NULL,
+    created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+-- ----------------------------------------------------------------------------
+-- audit_logs - system-level audit trail for every meaningful entity change
+-- (distinct from case_actions, which is the employee activity feed)
+-- ----------------------------------------------------------------------------
+CREATE TABLE audit_logs (
+    audit_id      INT AUTO_INCREMENT PRIMARY KEY,
+    entity_type   VARCHAR(30)  NOT NULL,
+    entity_id     INT NULL,
+    action        VARCHAR(50)  NOT NULL,
+    user_id       INT NULL,
+    details       VARCHAR(500) NULL,
+    metadata_json TEXT NULL,
+    created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_audit_user FOREIGN KEY (user_id) REFERENCES users(user_id),
+    INDEX idx_audit_entity (entity_type, entity_id),
+    INDEX idx_audit_time (created_at)
+) ENGINE=InnoDB;

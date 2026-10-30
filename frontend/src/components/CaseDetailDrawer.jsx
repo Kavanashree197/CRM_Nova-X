@@ -68,7 +68,7 @@ export default function CaseDetailDrawer({ caseId, onClose, onChanged }) {
 
       <div className="drawer-body">
         {tab === 'overview' && <Overview c={c} assignments={data.assignments} />}
-        {tab === 'history' && <History actions={data.actions} assignments={data.assignments} />}
+        {tab === 'history' && <History actions={data.actions} assignments={data.assignments} status_history={data.status_history} />}
         {tab === 'edit' && (canEdit
           ? <EditForm c={c} users={users} onSaved={(msg) => { toast(msg || 'Case updated'); load(); onChanged && onChanged() }} onError={m => toast(m, 'err')} />
           : <EmptyState title="You can't edit this case" sub="Only the assignee, Team Lead or Admin can edit." />)}
@@ -124,10 +124,12 @@ function Overview({ c, assignments }) {
   )
 }
 
-function History({ actions, assignments }) {
-  if (!actions || actions.length === 0) return <EmptyState title="No actions recorded yet" />
+function History({ actions, assignments, status_history }) {
+  const hasActions = actions && actions.length > 0
+  const hasStatus = status_history && status_history.length > 0
+  if (!hasActions && !hasStatus) return <EmptyState title="No actions recorded yet" sub="Actions and status changes appear here as they happen." />
   // Combine actions into a single chronological timeline (newest first)
-  const items = actions.slice().reverse()
+  const items = hasActions ? actions.slice().reverse() : []
   return (
     <div>
       <div className="text-sm muted" style={{ marginBottom: 12 }}>
@@ -150,6 +152,27 @@ function History({ actions, assignments }) {
           </div>
         ))}
       </div>
+      {hasStatus && (
+        <>
+          <div className="section-title" style={{ marginTop: 18 }}>Status transitions</div>
+          <div className="table-wrap">
+            <table className="tbl">
+              <thead><tr><th>From</th><th>To</th><th>By</th><th>When</th><th>Note</th></tr></thead>
+              <tbody>
+                {status_history.map(h => (
+                  <tr key={h.history_id}>
+                    <td className="muted">{h.from_status || '—'}</td>
+                    <td><span className={`badge st-${h.to_status}`}>{h.to_status}</span></td>
+                    <td className="muted">{h.changed_by_name || '—'}</td>
+                    <td className="mono muted">{fmt(h.changed_at)}</td>
+                    <td className="muted text-sm">{h.note || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
     </div>
   )
 }
@@ -166,7 +189,13 @@ function prettyType(t) {
     next_action_scheduled: 'Next Action Scheduled',
     resolution_submitted: 'Resolution Submitted',
     case_reopened: 'Case Reopened',
-  }[t] || t)
+    contacted: 'Contacted',
+    investigation_started: 'Investigation Started',
+    information_requested: 'Information Requested',
+    follow_up_scheduled: 'Follow-up Scheduled',
+    internal_discussion: 'Internal Discussion',
+    issue_resolved: 'Issue Resolved',
+  }[t] || t.replace(/_/g, ' ').replace(/\b\w/g, m => m.toUpperCase()))
 }
 
 function EditForm({ c, users, onSaved, onError }) {
@@ -272,7 +301,7 @@ function EditForm({ c, users, onSaved, onError }) {
 
 function ActionForm({ c, users, onSaved, onError }) {
   const [f, setF] = useState({
-    action_type: 'comment_added', description: '',
+    action_type: 'contacted', description: '',
     next_action_date: '', next_action: '',
   })
   const [saving, setSaving] = useState(false)
@@ -299,10 +328,13 @@ function ActionForm({ c, users, onSaved, onError }) {
       <div className="field full" style={{ marginBottom: 12 }}>
         <label className="lbl">Action type</label>
         <select className="inp" value={f.action_type} onChange={e => set('action_type', e.target.value)}>
-          <option value="comment_added">Comment / Update</option>
-          <option value="next_action_scheduled">Schedule Next Action</option>
-          <option value="customer_contact">Customer Contacted</option>
-          <option value="escalation">Escalation</option>
+          <option value="contacted">Contacted</option>
+          <option value="investigation_started">Investigation Started</option>
+          <option value="information_requested">Information Requested</option>
+          <option value="follow_up_scheduled">Follow-up Scheduled</option>
+          <option value="internal_discussion">Internal Discussion</option>
+          <option value="issue_resolved">Issue Resolved</option>
+          <option value="comment_added">Other / Comment</option>
         </select>
       </div>
       <div className="field full" style={{ marginBottom: 12 }}>

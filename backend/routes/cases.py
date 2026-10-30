@@ -2,6 +2,10 @@
 
 Every mutating endpoint writes one or more immutable action-log rows
 through activity.log_action(). Historical rows are never edited or deleted.
+
+In addition, every meaningful change is recorded in:
+  - audit_logs (system-level audit trail)
+  - case_status_history (formal status transition log)
 """
 from flask import Blueprint, request, jsonify
 from datetime import date
@@ -9,6 +13,7 @@ from datetime import date
 import database as db
 from auth import require_auth, require_role, current_user
 import activity
+import audit
 
 cases_bp = Blueprint("cases", __name__)
 
@@ -154,11 +159,22 @@ def create_case():
             cid, user["user_id"], "case_created",
             f"Case {case_code} created and assigned to {assignee_name}.",
             None, "New")
+        audit.log_audit("case", cid, "case_created", user["user_id"],
+                        f"Case {case_code} created and assigned to {assignee_name}.",
+                        {"case_code": case_code, "assigned_to": assigned_to})
+        audit.log_audit("assignment", cid, "case_assigned", user["user_id"],
+                        f"Case {case_code} assigned to {assignee_name}.",
+                        {"assigned_to": assigned_to, "assigned_by": user["user_id"]})
     else:
         activity.log_action(
             cid, user["user_id"], "case_created",
             f"Case {case_code} created (unassigned).",
             None, "New")
+        audit.log_audit("case", cid, "case_created", user["user_id"],
+                        f"Case {case_code} created (unassigned).",
+                        {"case_code": case_code})
+    # Formal status history: initial New state
+    audit.log_status_history(cid, None, "New", user["user_id"], "Case created")
 
     return jsonify({"case": _case_row(cid)}), 201
 
@@ -221,6 +237,9 @@ def update_case(case_id):
                 activity.log_action(case_id, user["user_id"], "case_updated",
                                     f"{field.replace('_',' ').title()} updated.",
                                     old, new)
+                audit.log_audit("case", case_id, f"{field}_changed", user["user_id"],
+                                f"{field.replace('_',' ').title()} changed from {old or '—'} to {new or '—'}.",
+                                {"field": field, "from": old, "to": new})
                 changes.append(field)
 
     # Priority
@@ -235,6 +254,9 @@ def update_case(case_id):
             activity.log_action(case_id, user["user_id"], "priority_updated",
                                 f"Priority changed from {old} to {new}.",
                                 old, new)
+            audit.log_audit("case", case_id, "priority_changed", user["user_id"],
+                            f"Priority changed from {old} to {new}.",
+                            {"from": old, "to": new})
             changes.append("priority")
 
     # Assignment / reassignment
@@ -261,6 +283,9 @@ def update_case(case_id):
             activity.log_action(case_id, user["user_id"], action_type,
                                 f"Case reassigned from {old_name} to {new_name}.",
                                 old_name, new_name)
+            audit.log_audit("assignment", case_id, action_type, user["user_id"],
+                            f"Case reassigned from {old_name} to {new_name}.",
+                            {"from": old, "to": new, "from_name": old_name, "to_name": new_name})
             changes.append("assigned_to")
 
     # Status change
@@ -286,6 +311,14 @@ def update_case(case_id):
                 activity.log_action(case_id, user["user_id"], "status_changed",
                                     f"Status changed from {old} to {new}.",
                                     old, new)
+                audit.log_status_history(case_id, old, new, user["user_id"],
+                                         f"Resolved: {resolution_note[:120]}")
+                audit.log_audit("case", case_id, "status_changed", user["user_id"],
+                                f"Status changed from {old} to {new} (resolved).",
+                                {"from": old, "to": new})
+                audit.log_audit("case", case_id, "completion", user["user_id"],
+                                f"Case completed with resolution note.",
+                                {"resolution_note": resolution_note[:200]})
             elif new == "Reopened":
                 # Reopening preserves prior completion history (we don't wipe
                 # completion_date/resolution_note - they remain visible in the
@@ -296,12 +329,21 @@ def update_case(case_id):
                 activity.log_action(case_id, user["user_id"], "case_reopened",
                                     f"Case reopened from {old}. Prior completion preserved.",
                                     old, new)
+                audit.log_status_history(case_id, old, new, user["user_id"],
+                                         "Case reopened; prior completion preserved.")
+                audit.log_audit("case", case_id, "case_reopened", user["user_id"],
+                                f"Case reopened from {old}. Prior completion preserved.",
+                                {"from": old, "to": new})
             else:
                 db.execute("UPDATE cases SET status=%s WHERE case_id=%s",
                            (new, case_id))
                 activity.log_action(case_id, user["user_id"], "status_changed",
                                     f"Status changed from {old} to {new}.",
                                     old, new)
+                audit.log_status_history(case_id, old, new, user["user_id"], None)
+                audit.log_audit("case", case_id, "status_changed", user["user_id"],
+                                f"Status changed from {old} to {new}.",
+                                {"from": old, "to": new})
             changes.append("status")
 
     db.execute("UPDATE cases SET updated_at=%s WHERE case_id=%s",
@@ -345,13 +387,17 @@ def add_action(case_id):
 
     aid = activity.log_action(case_id, user["user_id"], action_type,
                               description, previous_value, new_value)
+    audit.log_audit("action", aid, "action_added", user["user_id"],
+                    f"Action '{action_type}' recorded on case {case['case_code']}.",
+                    {"case_id": case_id, "action_type": action_type,
+                     "description": description[:200]})
     db.execute("UPDATE cases SET updated_at=%s WHERE case_id=%s",
                (date.today().isoformat(), case_id))
     return jsonify({"action_id": aid}), 201
 
 
 # ---------------------------------------------------------------------------
-# GET /api/cases/<id>/history  - assignments + actions (full timeline)
+# GET /api/cases/<id>/history  - assignments + actions + status history (timeline)
 # ---------------------------------------------------------------------------
 @cases_bp.route("/<int:case_id>/history", methods=["GET"])
 @require_auth
@@ -382,12 +428,23 @@ def case_history(case_id):
            WHERE ac.case_id = %s
            ORDER BY ac.created_at ASC, ac.action_id ASC""", (case_id,))
 
+    status_history = db.fetch_all(
+        """SELECT h.history_id, h.case_id, h.from_status, h.to_status,
+                  h.changed_by, h.note, h.changed_at,
+                  u.name AS changed_by_name
+           FROM case_status_history h
+           LEFT JOIN users u ON u.user_id = h.changed_by
+           WHERE h.case_id = %s
+           ORDER BY h.changed_at ASC, h.history_id ASC""", (case_id,))
+
     return jsonify({
         "case": case,
         "assignments": assignments,
         "actions": actions,
+        "status_history": status_history,
         "summary": {
             "assignments_count": len(assignments),
             "actions_count": len(actions),
+            "status_history_count": len(status_history),
         },
     })

@@ -109,6 +109,8 @@ def summary():
            ORDER BY due_date ASC LIMIT 15""",
         (today_iso, (date.today() + timedelta(days=7)).isoformat()))
 
+    audit_total = db.fetch_one("SELECT COUNT(*) AS c FROM audit_logs")["c"]
+
     return jsonify({
         "kpis": {
             "total_cases": total,
@@ -116,6 +118,8 @@ def summary():
             "completed_cases": completed,
             "overdue_cases": overdue,
             "total_actions": actions_total,
+            "total_audit_entries": audit_total,
+            "is_empty": total == 0,
         },
         "status_distribution": status_dist,
         "workload": workload,
