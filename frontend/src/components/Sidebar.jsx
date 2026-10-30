@@ -17,7 +17,6 @@ const NAV = [
   // Only Team Leads create official cases. Resources submit issue reports.
   { to: '/create-case', label: 'Create Case', icon: IconPlus, roles: ['Team Lead'] },
   { to: '/issue-reports', label: 'Customer Issue Reports', icon: IconActivity, roles: ['Resource', 'Team Lead'] },
-  { to: '/activity-logs', label: 'Activity Logs', icon: IconActivity, roles: ['Admin', 'Team Lead', 'Resource'] },
   { to: '/audit', label: 'Audit History', icon: IconHistory, roles: ['Admin', 'Team Lead', 'Resource'] },
   { to: '/reports', label: 'Productivity Reports', icon: IconReport, roles: ['Admin', 'Team Lead', 'Resource'] },
   { to: '/team', label: 'Team Performance', icon: IconTeam, roles: ['Admin', 'Team Lead'] },

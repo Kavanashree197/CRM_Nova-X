@@ -170,59 +170,31 @@ export default function Overview() {
         </div>
       </div>
 
-      {/* Recent activity + Priority cases */}
-      <div className="grid charts-grid mt-16">
-        <div className="card">
-          <div className="card-head">
-            <div className="card-title"><span className="live-pulse" style={{ marginRight: 8 }} /> Recent Activity</div>
-            <div className="card-link" onClick={() => nav('/activity-logs')}>View all →</div>
-          </div>
-          <div className="card-pad">
-            {data.recent_activities.length === 0
-              ? <EmptyState title="No recent activity" />
-              : <div className="feed">
-                  {data.recent_activities.map(a => (
-                    <div className="feed-item" key={a.action_id}>
-                      <div className="feed-dot"><IconActivity size={15} /></div>
-                      <div className="feed-body">
-                        <div className="feed-top">
-                          <span className="feed-type">{a.action_type.replace(/_/g, ' ')}</span>
-                          <span className="feed-case" onClick={() => setOpenId(a.case_id)}>{a.case_code}</span>
-                          <span className="muted text-xs">· {a.user_name}</span>
-                        </div>
-                        <div className="feed-desc">{a.description}</div>
-                        <div className="feed-meta">{a.created_at.replace('T', ' ').slice(0, 16)}</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>}
-          </div>
+      {/* Priority cases */}
+      <div className="card mt-16">
+        <div className="card-head">
+          <div className="card-title">Priority Cases</div>
+          <div className="card-link" onClick={() => nav('/all-cases')}>All cases →</div>
         </div>
-        <div className="card">
-          <div className="card-head">
-            <div className="card-title">Priority Cases</div>
-            <div className="card-link" onClick={() => nav('/all-cases')}>All cases →</div>
-          </div>
-          <div className="card-pad">
-            {data.priority_cases.length === 0
-              ? <EmptyState title="No priority cases" />
-              : <div className="feed">
-                  {data.priority_cases.map(c => (
-                    <div className="feed-item" key={c.case_id} style={{ cursor: 'pointer' }} onClick={() => setOpenId(c.case_id)}>
-                      <div className="feed-dot" style={{ background: 'var(--st-pending-bg)', color: 'var(--st-pending)' }}>!</div>
-                      <div className="feed-body">
-                        <div className="feed-top">
-                          <span className="feed-case">{c.case_code}</span>
-                          <PriorityBadge priority={c.priority} />
-                          <StatusBadge status={c.status} />
-                        </div>
+        <div className="card-pad">
+          {data.priority_cases.length === 0
+            ? <EmptyState title="No priority cases" />
+            : <div className="feed">
+                {data.priority_cases.map(c => (
+                  <div className="feed-item" key={c.case_id} style={{ cursor: 'pointer' }} onClick={() => setOpenId(c.case_id)}>
+                    <div className="feed-dot" style={{ background: 'var(--st-pending-bg)', color: 'var(--st-pending)' }}>!</div>
+                    <div className="feed-body">
+                      <div className="feed-top">
+                        <span className="feed-case">{c.case_code}</span>
+                        <PriorityBadge priority={c.priority} />
+                        <StatusBadge status={c.status} />
+                      </div>
                         <div className="feed-desc">{c.title}</div>
                         <div className="feed-meta">Assignee: {c.assigned_to_name || 'Unassigned'} · Due {c.due_date}</div>
                       </div>
                     </div>
                   ))}
                 </div>}
-          </div>
         </div>
       </div>
 
