@@ -55,11 +55,20 @@ CREATE TABLE cases (
     -- Copied from the case's category at closure time so dashboards show one
     -- consistent value across roles.
     complexity        ENUM('Low','Medium','High') NULL,
+    -- Customer + report linking (workflow: customer issue report → Team Lead
+    -- creates official case). NULL when the Team Lead creates a case directly.
+    customer_name     VARCHAR(150) NULL,
+    customer_email    VARCHAR(150) NULL,
+    customer_phone    VARCHAR(50) NULL,
+    contact_method    ENUM('Email','Phone Call') NULL,
+    reported_by       INT NULL,
+    issue_report_id   INT NULL,
     created_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     CONSTRAINT fk_cases_creator  FOREIGN KEY (created_by)  REFERENCES users(user_id),
     CONSTRAINT fk_cases_assignee FOREIGN KEY (assigned_to) REFERENCES users(user_id),
     CONSTRAINT fk_cases_closed_by FOREIGN KEY (closed_by_user_id) REFERENCES users(user_id),
+    CONSTRAINT fk_cases_reported_by FOREIGN KEY (reported_by) REFERENCES users(user_id),
     INDEX idx_cases_status   (status),
     INDEX idx_cases_assignee (assigned_to),
     INDEX idx_cases_due      (due_date),
@@ -120,6 +129,34 @@ CREATE TABLE case_status_history (
     CONSTRAINT fk_status_case  FOREIGN KEY (case_id)    REFERENCES cases(case_id) ON DELETE CASCADE,
     CONSTRAINT fk_status_user  FOREIGN KEY (changed_by) REFERENCES users(user_id),
     INDEX idx_status_case (case_id)
+) ENGINE=InnoDB;
+
+-- ----------------------------------------------------------------------------
+-- issue_reports - customer issue reports submitted by operational staff
+-- ----------------------------------------------------------------------------
+CREATE TABLE issue_reports (
+    report_id        INT AUTO_INCREMENT PRIMARY KEY,
+    customer_name    VARCHAR(150) NOT NULL,
+    customer_email   VARCHAR(150) NULL,
+    customer_phone   VARCHAR(50) NULL,
+    contact_method   ENUM('Email','Phone Call') NOT NULL,
+    issue_title      VARCHAR(200) NOT NULL,
+    category         VARCHAR(50) NOT NULL,
+    description      TEXT NULL,
+    reference_info   VARCHAR(255) NULL,
+    reported_date    DATE NOT NULL,
+    reported_by      INT NOT NULL,
+    submitted_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    status           ENUM('Pending Review','Reviewed','Converted to Case','Rejected')
+                     NOT NULL DEFAULT 'Pending Review',
+    reviewed_by      INT NULL,
+    reviewed_at      TIMESTAMP NULL,
+    rejection_reason VARCHAR(500) NULL,
+    converted_case_id INT NULL,
+    CONSTRAINT fk_ir_reported_by FOREIGN KEY (reported_by) REFERENCES users(user_id),
+    CONSTRAINT fk_ir_reviewed_by FOREIGN KEY (reviewed_by) REFERENCES users(user_id),
+    INDEX idx_ir_status (status),
+    INDEX idx_ir_reported_by (reported_by)
 ) ENGINE=InnoDB;
 
 -- ----------------------------------------------------------------------------

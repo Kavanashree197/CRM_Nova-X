@@ -125,11 +125,11 @@ def list_cases():
 # POST /api/cases  - create
 # ---------------------------------------------------------------------------
 @cases_bp.route("", methods=["POST"])
-@require_role("Resource")
+@require_role("Team Lead")
 def create_case():
-    """Only Resources create cases. Admins and Team Leads monitor but don't
-    create — the role is verified from the JWT, never trusted from the client.
-    This enforces the permission in Flask, not just by hiding the UI button."""
+    """Only Team Leads create official cases. Resources submit customer issue
+    reports (which the Team Lead converts). Admin monitors. The role is
+    verified from the JWT, never trusted from the client."""
     user = current_user()
     data = request.get_json(force=True) or {}
 
@@ -154,6 +154,18 @@ def create_case():
     next_action_date = data.get("next_action_date") or None
     next_action       = (data.get("next_action") or "").strip() or None
 
+    # Date validation: next_action_date must be on or before due_date
+    if due_date and next_action_date and next_action_date > due_date:
+        return jsonify({"error": "Next action date must be on or before the due date"}), 400
+
+    # Optional customer info (Team Lead may include when creating directly)
+    customer_name  = (data.get("customer_name") or "").strip() or None
+    customer_email = (data.get("customer_email") or "").strip() or None
+    customer_phone = (data.get("customer_phone") or "").strip() or None
+    contact_method = (data.get("contact_method") or "").strip() or None
+    if contact_method and contact_method not in ("Email", "Phone Call"):
+        return jsonify({"error": "Contact method must be Email or Phone Call"}), 400
+
     if not title:
         return jsonify({"error": "Title is required"}), 400
     if not _is_valid_category(category):
@@ -172,10 +184,12 @@ def create_case():
         """INSERT INTO cases
            (case_code, title, category, description, priority, status,
             created_by, assigned_to, assignment_status, due_date,
-            next_action_date, next_action)
-           VALUES (%s,%s,%s,%s,%s,'New',%s,NULL,'Awaiting Assignment',%s,%s,%s)""",
+            next_action_date, next_action,
+            customer_name, customer_email, customer_phone, contact_method)
+           VALUES (%s,%s,%s,%s,%s,'New',%s,NULL,'Awaiting Assignment',%s,%s,%s,%s,%s,%s,%s)""",
         (case_code, title, category, description, priority,
-         created_by, due_date, next_action_date, next_action),
+         created_by, due_date, next_action_date, next_action,
+         customer_name, customer_email, customer_phone, contact_method),
     )
 
     # --- Automatic assignment engine (no client input) ---

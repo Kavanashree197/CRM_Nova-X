@@ -19,6 +19,7 @@ from routes.dashboard import dashboard_bp
 from routes.audit import audit_bp
 from routes.categories import categories_bp
 from routes.skills import skills_bp
+from routes.issue_reports import issue_reports_bp
 
 
 def create_app():
@@ -34,6 +35,7 @@ def create_app():
     app.register_blueprint(audit_bp,      url_prefix="/api/audit")
     app.register_blueprint(categories_bp, url_prefix="/api/categories")
     app.register_blueprint(skills_bp,     url_prefix="/api/skills")
+    app.register_blueprint(issue_reports_bp, url_prefix="/api/issue-reports")
 
     @app.route("/api/health")
     def health():

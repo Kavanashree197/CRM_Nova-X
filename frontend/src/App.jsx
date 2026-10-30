@@ -8,6 +8,7 @@ import TeamLeadDashboard from './pages/TeamLeadDashboard'
 import MyCases from './pages/MyCases'
 import AllCases from './pages/AllCases'
 import CreateCase from './pages/CreateCase'
+import IssueReports from './pages/IssueReports'
 import ActivityLogs from './pages/ActivityLogs'
 import AuditHistory from './pages/AuditHistory'
 import ProductivityReports from './pages/ProductivityReports'
@@ -45,7 +46,8 @@ export default function App() {
       <Route path="/"             element={<DashboardRouter />} />
       <Route path="/my-cases"     element={<RequireRole roles={['Resource']}><MyCases /></RequireRole>} />
       <Route path="/all-cases"    element={<RequireAuth><AllCases /></RequireAuth>} />
-      <Route path="/create-case"  element={<RequireRole roles={['Resource']}><CreateCase /></RequireRole>} />
+      <Route path="/create-case"  element={<RequireRole roles={['Team Lead']}><CreateCase /></RequireRole>} />
+      <Route path="/issue-reports" element={<RequireRole roles={['Resource','Team Lead']}><IssueReports /></RequireRole>} />
       <Route path="/activity-logs" element={<RequireAuth><ActivityLogs /></RequireAuth>} />
       <Route path="/audit"        element={<RequireAuth><AuditHistory /></RequireAuth>} />
       <Route path="/reports"      element={<RequireAuth><ProductivityReports /></RequireAuth>} />

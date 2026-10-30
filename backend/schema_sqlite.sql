@@ -40,6 +40,17 @@ CREATE TABLE IF NOT EXISTS cases (
     -- Derived from the case's category (category.complexity) at closure time
     -- so dashboards show a consistent value across roles.
     complexity        TEXT CHECK (complexity IS NULL OR complexity IN ('Low','Medium','High')),
+    -- Customer + report linking (workflow: customer issue report → Team Lead
+    -- creates official case). customer_* may be NULL when the Team Lead creates
+    -- a case directly without a report. reported_by = the employee who reported
+    -- the issue (from the linked issue_report, or NULL). issue_report_id links
+    -- to the original issue_report so the chain is traceable end-to-end.
+    customer_name     TEXT,
+    customer_email    TEXT,
+    customer_phone    TEXT,
+    contact_method    TEXT CHECK (contact_method IS NULL OR contact_method IN ('Email','Phone Call')),
+    reported_by       INTEGER REFERENCES users(user_id),
+    issue_report_id   INTEGER,
     created_at        TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at        TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -89,6 +100,36 @@ CREATE TABLE IF NOT EXISTS case_status_history (
     changed_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_status_history_case ON case_status_history(case_id);
+
+-- ----------------------------------------------------------------------------
+-- issue_reports - customer issue reports submitted by operational staff.
+-- A Resource receives a customer complaint (email/phone) and files this
+-- report. The Team Lead reviews it and either converts it to an official
+-- case or rejects it. The report preserves the original reporter + customer
+-- info so the full chain is traceable.
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS issue_reports (
+    report_id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_name   TEXT NOT NULL,
+    customer_email  TEXT,
+    customer_phone  TEXT,
+    contact_method  TEXT NOT NULL CHECK (contact_method IN ('Email','Phone Call')),
+    issue_title     TEXT NOT NULL,
+    category        TEXT NOT NULL,
+    description     TEXT,
+    reference_info  TEXT,
+    reported_date   TEXT NOT NULL,
+    reported_by     INTEGER NOT NULL REFERENCES users(user_id),
+    submitted_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    status          TEXT NOT NULL DEFAULT 'Pending Review'
+                    CHECK (status IN ('Pending Review','Reviewed','Converted to Case','Rejected')),
+    reviewed_by     INTEGER REFERENCES users(user_id),
+    reviewed_at     TEXT,
+    rejection_reason TEXT,
+    converted_case_id INTEGER REFERENCES cases(case_id)
+);
+CREATE INDEX IF NOT EXISTS idx_issue_reports_status ON issue_reports(status);
+CREATE INDEX IF NOT EXISTS idx_issue_reports_reported_by ON issue_reports(reported_by);
 
 -- ----------------------------------------------------------------------------
 -- categories - lookup table for case categories (PS-02 Round 2 requirement)
