@@ -118,7 +118,9 @@ def create_case():
     title       = (data.get("title") or "").strip()
     category    = (data.get("category") or "").strip()
     description = (data.get("description") or "").strip()
-    priority    = data.get("priority") or "Medium"
+    # Priority is NEVER read from the client. It is derived from the
+    # category's default_priority (source of truth = the categories table).
+    # Any client-supplied priority is silently ignored.
     assigned_to = data.get("assigned_to") or None
     due_date    = data.get("due_date") or None
     next_action_date = data.get("next_action_date") or None
@@ -128,8 +130,13 @@ def create_case():
         return jsonify({"error": "Title is required"}), 400
     if category not in VALID_CATEGORIES:
         return jsonify({"error": "Invalid category"}), 400
+    # Look up the category's default_priority — the backend decides priority.
+    cat_row = db.fetch_one("SELECT default_priority FROM categories WHERE name=%s", (category,))
+    if not cat_row:
+        return jsonify({"error": "Invalid category"}), 400
+    priority = cat_row["default_priority"]
     if priority not in VALID_PRIORITIES:
-        return jsonify({"error": "Invalid priority"}), 400
+        priority = "Medium"  # defensive fallback
     if assigned_to is not None:
         au = db.fetch_one("SELECT user_id FROM users WHERE user_id=%s", (assigned_to,))
         if not au:
@@ -224,6 +231,23 @@ def update_case(case_id):
                 activity.log_action(case_id, user["user_id"], "case_updated",
                                     f"{field.replace('_',' ').title()} updated.",
                                     old, new)
+                # When the category changes, priority is automatically
+                # recomputed from the new category's default_priority.
+                # The client cannot set priority directly.
+                if field == "category":
+                    cat_row = db.fetch_one("SELECT default_priority FROM categories WHERE name=%s", (new,))
+                    new_pri = cat_row["default_priority"] if cat_row else "Medium"
+                    if new_pri != case["priority"]:
+                        old_pri = case["priority"]
+                        db.execute("UPDATE cases SET priority=%s WHERE case_id=%s",
+                                   (new_pri, case_id))
+                        activity.log_action(case_id, user["user_id"], "priority_updated",
+                                            f"Priority auto-updated from {old_pri} to {new_pri} (category changed).",
+                                            old_pri, new_pri)
+                        audit.log_audit("case", case_id, "priority_auto_changed", user["user_id"],
+                                        f"Priority auto-updated from {old_pri} to {new_pri} because category changed to {new}.",
+                                        {"from": old_pri, "to": new_pri, "reason": "category_change"})
+                        changes.append("priority")
                 changes.append(field)
 
     # Date fields
@@ -242,22 +266,11 @@ def update_case(case_id):
                                 {"field": field, "from": old, "to": new})
                 changes.append(field)
 
-    # Priority
-    if "priority" in data:
-        new = data["priority"]
-        if new not in VALID_PRIORITIES:
-            return jsonify({"error": "Invalid priority"}), 400
-        old = case["priority"]
-        if new != old:
-            db.execute("UPDATE cases SET priority=%s WHERE case_id=%s",
-                       (new, case_id))
-            activity.log_action(case_id, user["user_id"], "priority_updated",
-                                f"Priority changed from {old} to {new}.",
-                                old, new)
-            audit.log_audit("case", case_id, "priority_changed", user["user_id"],
-                            f"Priority changed from {old} to {new}.",
-                            {"from": old, "to": new})
-            changes.append("priority")
+    # Priority is NOT settable by the client. It is always derived from the
+    # category's default_priority (handled in the category-change block above).
+    # Any client-supplied "priority" field is silently ignored so the backend
+    # remains the source of truth. (No error returned — the request still
+    # succeeds for the other fields, but priority is never overwritten by it.)
 
     # Assignment / reassignment
     if "assigned_to" in data:

@@ -69,16 +69,17 @@ def productivity():
            AND due_date IS NOT NULL AND due_date < %s""", (uid, date.today().isoformat()))["c"]
 
     # Average completion time (days) for cases completed in range.
-    # SQLite and MySQL compute date diffs differently.
+    # Use DATE() on both sides so a case created at 13:45 and completed the
+    # same day (date-only completion_date at midnight) counts as 0, not -0.6.
     if db.config.DB_TYPE == "sqlite":
         avg_row = db.fetch_one(
-            """SELECT AVG(julianday(completion_date) - julianday(created_at)) AS avg_days
+            """SELECT AVG(julianday(DATE(completion_date)) - julianday(DATE(created_at))) AS avg_days
                FROM cases WHERE assigned_to=%s AND status='Completed'
                AND completion_date BETWEEN %s AND %s""",
             (uid, start, end))
     else:
         avg_row = db.fetch_one(
-            """SELECT AVG(DATEDIFF(completion_date, created_at)) AS avg_days
+            """SELECT AVG(DATEDIFF(DATE(completion_date), DATE(created_at))) AS avg_days
                FROM cases WHERE assigned_to=%s AND status='Completed'
                AND completion_date BETWEEN %s AND %s""",
             (uid, start, end))

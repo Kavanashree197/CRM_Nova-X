@@ -3,19 +3,18 @@ import { useNavigate } from 'react-router-dom'
 import { apiGet, apiPost } from '../api'
 import { useToast } from '../components/Layout'
 import CaseDetailDrawer from '../components/CaseDetailDrawer'
+import { PriorityBadge } from '../components/Badge'
 import { IconCheck } from '../components/icons'
-
-const PRIORITIES = ['Low', 'Medium', 'High', 'Critical']
 
 export default function CreateCase() {
   const nav = useNavigate()
   const toast = useToast()
   const [users, setUsers] = useState([])
-  const [categories, setCategories] = useState([])
+  const [categories, setCategories] = useState([])  // [{name, default_priority}]
   const [saving, setSaving] = useState(false)
   const [createdId, setCreatedId] = useState(null)
   const [f, setF] = useState({
-    title: '', category: '', description: '', priority: 'Medium',
+    title: '', category: '', description: '',
     assigned_to: '', due_date: '', next_action_date: '', next_action: '',
   })
   const [err, setErr] = useState({})
@@ -23,13 +22,18 @@ export default function CreateCase() {
   useEffect(() => {
     apiGet('/api/auth/users').then(d => setUsers(d.users || []))
     apiGet('/api/categories').then(d => {
-      const cats = (d.categories || []).map(c => c.name)
+      const cats = d.categories || []
       setCategories(cats)
-      if (cats.length && !f.category) setF(s => ({ ...s, category: cats[0] }))
+      if (cats.length && !f.category) setF(s => ({ ...s, category: cats[0].name }))
     })
   }, []) // eslint-disable-line
 
   const set = (k, v) => setF(s => ({ ...s, [k]: v }))
+
+  // Priority is derived from the selected category's default_priority —
+  // the backend is the source of truth; the client never sends a priority.
+  const selectedCat = categories.find(c => c.name === f.category)
+  const autoPriority = selectedCat?.default_priority || null
 
   const validate = () => {
     const e = {}
@@ -44,8 +48,12 @@ export default function CreateCase() {
     if (!validate()) return
     setSaving(true)
     try {
-      const body = { ...f }
-      if (body.assigned_to) body.assigned_to = Number(body.assigned_to)
+      // Note: priority is intentionally NOT sent — the backend derives it
+      // from the category's default_priority.
+      const body = { title: f.title, category: f.category, description: f.description,
+                     assigned_to: f.assigned_to ? Number(f.assigned_to) : null,
+                     due_date: f.due_date, next_action_date: f.next_action_date,
+                     next_action: f.next_action }
       const d = await apiPost('/api/cases', body)
       toast('Case created and logged to activity feed')
       setCreatedId(d.case.case_id)
@@ -74,14 +82,16 @@ export default function CreateCase() {
           <div className="field">
             <label className="lbl">Category</label>
             <select className="inp" value={f.category} onChange={e => set('category', e.target.value)}>
-              {categories.map(x => <option key={x}>{x}</option>)}
+              {categories.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
             </select>
           </div>
           <div className="field">
-            <label className="lbl">Priority</label>
-            <select className="inp" value={f.priority} onChange={e => set('priority', e.target.value)}>
-              {PRIORITIES.map(x => <option key={x}>{x}</option>)}
-            </select>
+            <label className="lbl">Priority <span className="muted" style={{ fontWeight: 400 }}>(auto from category)</span></label>
+            <div style={{ paddingTop: 9 }}>
+              {autoPriority
+                ? <PriorityBadge priority={autoPriority} />
+                : <span className="muted text-sm">Select a category to determine priority.</span>}
+            </div>
           </div>
           <div className="field">
             <label className="lbl">Assign to resource</label>

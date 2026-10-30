@@ -105,12 +105,15 @@ CREATE TABLE case_status_history (
 
 -- ----------------------------------------------------------------------------
 -- categories - lookup table for case categories (PS-02 Round 2 requirement)
+-- default_priority is the source of truth for category-based automatic
+-- priority assignment (PS-02 Round 3 — clients cannot set priority manually).
 -- ----------------------------------------------------------------------------
 CREATE TABLE categories (
-    category_id   INT AUTO_INCREMENT PRIMARY KEY,
-    name          VARCHAR(50) NOT NULL UNIQUE,
-    description   VARCHAR(255) NULL,
-    created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    category_id     INT AUTO_INCREMENT PRIMARY KEY,
+    name             VARCHAR(50) NOT NULL UNIQUE,
+    description      VARCHAR(255) NULL,
+    default_priority ENUM('Low','Medium','High','Critical') NOT NULL DEFAULT 'Medium',
+    created_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
 
 -- ----------------------------------------------------------------------------

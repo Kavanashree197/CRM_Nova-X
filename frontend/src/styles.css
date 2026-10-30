@@ -32,10 +32,10 @@
   --st-reopened-bg:#FEF2F2;
   --overdue:       #DC2626;   /* danger — spec */
 
-  --pri-low:       #737373;  --pri-low-bg:    #F5F5F5;
-  --pri-med:       #D97706;  --pri-med-bg:    #FFFBEB;
-  --pri-high:      #D97706;  --pri-high-bg:   #FFFBEB;
-  --pri-crit:      #DC2626;  --pri-crit-bg:   #FEF2F2;
+  --pri-low:       #16A34A;  --pri-low-bg:    #F0FDF4;   /* green — non-urgent */
+  --pri-med:       #2563EB;  --pri-med-bg:    #EFF6FF;   /* blue — operational */
+  --pri-high:      #D97706;  --pri-high-bg:   #FFFBEB;   /* orange — important */
+  --pri-crit:      #DC2626;  --pri-crit-bg:   #FEF2F2;   /* red — critical */
 
   --shadow-sm: 0 1px 2px rgba(16,24,40,.04);
   --shadow:    0 1px 3px rgba(16,24,40,.06), 0 1px 2px rgba(16,24,40,.04);

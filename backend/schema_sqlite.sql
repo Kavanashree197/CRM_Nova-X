@@ -75,12 +75,15 @@ CREATE INDEX IF NOT EXISTS idx_status_history_case ON case_status_history(case_i
 
 -- ----------------------------------------------------------------------------
 -- categories - lookup table for case categories (PS-02 Round 2 requirement)
+-- default_priority is the source of truth for category-based automatic
+-- priority assignment (PS-02 Round 3 — clients cannot set priority manually).
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS categories (
-    category_id   INTEGER PRIMARY KEY AUTOINCREMENT,
-    name          TEXT NOT NULL UNIQUE,
-    description   TEXT,
-    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+    category_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    name             TEXT NOT NULL UNIQUE,
+    description      TEXT,
+    default_priority TEXT NOT NULL DEFAULT 'Medium' CHECK (default_priority IN ('Low','Medium','High','Critical')),
+    created_at       TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 -- ----------------------------------------------------------------------------

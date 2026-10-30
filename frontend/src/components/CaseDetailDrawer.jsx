@@ -22,17 +22,20 @@ export default function CaseDetailDrawer({ caseId, onClose, onChanged }) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [users, setUsers] = useState([])
+  const [categories, setCategories] = useState([])
   const canEdit = user && (user.role === 'Admin' || user.role === 'Team Lead' || (data && data.case && data.case.assigned_to === user.user_id))
 
-  // Load case + history + users
+  // Load case + history + users + categories
   const load = () => {
     setLoading(true)
     Promise.all([
       apiGet(`/api/cases/${caseId}/history`),
       apiGet('/api/auth/users'),
-    ]).then(([h, u]) => {
+      apiGet('/api/categories'),
+    ]).then(([h, u, cat]) => {
       setData(h)
       setUsers(u.users || [])
+      setCategories(cat.categories || [])
     }).catch(() => toast('Failed to load case', 'err'))
       .finally(() => setLoading(false))
   }
@@ -70,7 +73,7 @@ export default function CaseDetailDrawer({ caseId, onClose, onChanged }) {
         {tab === 'overview' && <Overview c={c} assignments={data.assignments} />}
         {tab === 'history' && <History actions={data.actions} assignments={data.assignments} status_history={data.status_history} />}
         {tab === 'edit' && (canEdit
-          ? <EditForm c={c} users={users} onSaved={(msg) => { toast(msg || 'Case updated'); load(); onChanged && onChanged() }} onError={m => toast(m, 'err')} />
+          ? <EditForm c={c} users={users} categories={categories} onSaved={(msg) => { toast(msg || 'Case updated'); load(); onChanged && onChanged() }} onError={m => toast(m, 'err')} />
           : <EmptyState title="You can't edit this case" sub="Only the assignee, Team Lead or Admin can edit." />)}
         {tab === 'action' && (canEdit
           ? <ActionForm c={c} users={users} onSaved={(msg) => { toast(msg || 'Action recorded'); load(); onChanged && onChanged() }} onError={m => toast(m, 'err')} />
@@ -198,15 +201,20 @@ function prettyType(t) {
   }[t] || t.replace(/_/g, ' ').replace(/\b\w/g, m => m.toUpperCase()))
 }
 
-function EditForm({ c, users, onSaved, onError }) {
+function EditForm({ c, users, categories, onSaved, onError }) {
   const [f, setF] = useState({
     title: c.title, category: c.category, description: c.description || '',
-    priority: c.priority, status: c.status, assigned_to: c.assigned_to || '',
+    status: c.status, assigned_to: c.assigned_to || '',
     due_date: c.due_date || '', next_action_date: c.next_action_date || '',
     next_action: c.next_action || '', resolution_note: '',
   })
   const [saving, setSaving] = useState(false)
   const set = (k, v) => setF(s => ({ ...s, [k]: v }))
+  // Priority is derived from the selected category's default_priority —
+  // read-only in the UI, ignored by the backend. The backend recomputes
+  // priority automatically when category changes.
+  const selectedCat = (categories || []).find(cat => cat.name === f.category)
+  const autoPriority = selectedCat?.default_priority || c.priority
 
   const save = async () => {
     if (f.status === 'Completed' && !f.resolution_note && c.status !== 'Completed') {
@@ -219,7 +227,7 @@ function EditForm({ c, users, onSaved, onError }) {
     if (f.title !== c.title) body.title = f.title
     if (f.category !== c.category) body.category = f.category
     if (f.description !== (c.description || '')) body.description = f.description
-    if (f.priority !== c.priority) body.priority = f.priority
+    // priority is intentionally NOT sent — backend derives it from category
     if (f.status !== c.status) { body.status = f.status; if (f.status === 'Completed') body.resolution_note = f.resolution_note }
     if ((f.assigned_to || null) !== (c.assigned_to || null)) body.assigned_to = f.assigned_to ? Number(f.assigned_to) : null
     if (f.due_date !== (c.due_date || '')) body.due_date = f.due_date || null
@@ -244,14 +252,12 @@ function EditForm({ c, users, onSaved, onError }) {
         <div className="field">
           <label className="lbl">Category</label>
           <select className="inp" value={f.category} onChange={e => set('category', e.target.value)}>
-            {CATEGORIES.map(x => <option key={x}>{x}</option>)}
+            {(categories || []).map(cat => <option key={cat.name} value={cat.name}>{cat.name}</option>)}
           </select>
         </div>
         <div className="field">
-          <label className="lbl">Priority</label>
-          <select className="inp" value={f.priority} onChange={e => set('priority', e.target.value)}>
-            {PRIORITIES.map(x => <option key={x}>{x}</option>)}
-          </select>
+          <label className="lbl">Priority <span className="muted" style={{ fontWeight: 400 }}>(auto)</span></label>
+          <div style={{ paddingTop: 9 }}><PriorityBadge priority={autoPriority} /></div>
         </div>
         <div className="field">
           <label className="lbl">Status</label>

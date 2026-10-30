@@ -130,8 +130,8 @@ echo "[BUN] Setting up database..."
 bun run db:push
 log_step_end "bun run db:push"
 
-log_step_start "Starting CaseFlow CRM (Flask backend + Vite frontend)"
-# --- CaseFlow CRM: Flask backend on :5000 -----------------------------------
+log_step_start "Starting CRM (Flask backend + Vite frontend)"
+# --- CRM: Flask backend on :5000 -----------------------------------
 # Seed the database first (idempotent), then start Flask.
 (
   cd "$PROJECT_DIR/backend"
@@ -143,7 +143,7 @@ log_step_start "Starting CaseFlow CRM (Flask backend + Vite frontend)"
 FLASK_PID=$!
 disown "$FLASK_PID" 2>/dev/null || true
 
-# --- CaseFlow CRM: Vite frontend on :3000 (the preview port) -----------------
+# --- CRM: Vite frontend on :3000 (the preview port) -----------------
 (
   cd "$PROJECT_DIR/frontend"
   echo "[CRM] Starting Vite frontend on :3000..."
@@ -164,6 +164,6 @@ log_step_end "Health check"
 
 start_mini_services
 
-echo "CaseFlow CRM is running: Flask backend (PID: $FLASK_PID) on :5000, Vite frontend (PID: $DEV_PID) on :3000."
+echo "CRM is running: Flask backend (PID: $FLASK_PID) on :5000, Vite frontend (PID: $DEV_PID) on :3000."
 disown "$DEV_PID" 2>/dev/null || true
 unset DEV_PID

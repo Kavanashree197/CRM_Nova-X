@@ -28,15 +28,22 @@ import database as db
 
 
 TODAY = date.today()
+# Category → default priority mapping (source of truth lives in the categories
+# table; the backend reads default_priority when a case is created, so the
+# client can never set priority manually). Mapping rationale:
+#   Billing / Technical Support / Bug Report → High   (real customer-impacting issues)
+#   Account Access / Data Migration         → Medium  (operational, time-sensitive)
+#   Compliance                              → Critical (legal/regulatory — e.g. GDPR 30-day)
+#   Onboarding / Feature Request            → Low     (non-urgent / planning)
 DEFAULT_CATEGORIES = [
-    ("Billing",           "Invoices, payments, refunds, charge disputes"),
-    ("Technical Support", "Product bugs, errors, integration failures"),
-    ("Account Access",    "Login, password, SSO, permissions"),
-    ("Onboarding",        "New customer setup and provisioning"),
-    ("Feature Request",   "Customer-requested product enhancements"),
-    ("Bug Report",        "Reproducible product defects"),
-    ("Data Migration",    "Bulk imports, exports, transfers"),
-    ("Compliance",        "GDPR, data export, legal holds"),
+    ("Billing",           "High",     "Invoices, payments, refunds, charge disputes"),
+    ("Technical Support", "High",     "Product bugs, errors, integration failures"),
+    ("Account Access",    "Medium",   "Login, password, SSO, permissions"),
+    ("Onboarding",        "Low",      "New customer setup and provisioning"),
+    ("Feature Request",   "Low",      "Customer-requested product enhancements"),
+    ("Bug Report",        "High",     "Reproducible product defects"),
+    ("Data Migration",    "Medium",   "Bulk imports, exports, transfers"),
+    ("Compliance",        "Critical", "GDPR, data export, legal holds"),
 ]
 
 
@@ -74,10 +81,10 @@ def seed_users():
 
 def seed_categories():
     db.execute("DELETE FROM categories")
-    for name, desc in DEFAULT_CATEGORIES:
+    for name, default_priority, desc in DEFAULT_CATEGORIES:
         db.execute(
-            "INSERT INTO categories (name, description) VALUES (%s, %s)",
-            (name, desc),
+            "INSERT INTO categories (name, default_priority, description) VALUES (%s, %s, %s)",
+            (name, default_priority, desc),
         )
 
 
