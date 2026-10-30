@@ -1,0 +1,393 @@
+"""Case management routes.
+
+Every mutating endpoint writes one or more immutable action-log rows
+through activity.log_action(). Historical rows are never edited or deleted.
+"""
+from flask import Blueprint, request, jsonify
+from datetime import date
+
+import database as db
+from auth import require_auth, require_role, current_user
+import activity
+
+cases_bp = Blueprint("cases", __name__)
+
+VALID_STATUSES   = ["New", "Active", "Pending", "Completed", "Reopened"]
+VALID_PRIORITIES = ["Low", "Medium", "High", "Critical"]
+VALID_CATEGORIES = [
+    "Billing", "Technical Support", "Account Access", "Onboarding",
+    "Feature Request", "Bug Report", "Data Migration", "Compliance",
+]
+
+
+def _next_case_code():
+    row = db.fetch_one("SELECT MAX(case_id) AS m FROM cases")
+    n = (row["m"] or 0) + 1
+    return "CASE-%03d" % n
+
+
+def _case_row(case_id):
+    return db.fetch_one(
+        """SELECT c.*,
+                  uc.name AS created_by_name,
+                  ua.name AS assigned_to_name,
+                  ua.email AS assigned_to_email
+           FROM cases c
+           LEFT JOIN users uc ON uc.user_id = c.created_by
+           LEFT JOIN users ua ON ua.user_id = c.assigned_to
+           WHERE c.case_id = %s""",
+        (case_id,),
+    )
+
+
+def _user_can_see_all_cases(user):
+    """Admin/Team Lead see all cases; Resources see only their assigned ones."""
+    return user["role"] in ("Admin", "Team Lead")
+
+
+# ---------------------------------------------------------------------------
+# GET /api/cases  - list + filter
+# ---------------------------------------------------------------------------
+@cases_bp.route("", methods=["GET"])
+@require_auth
+def list_cases():
+    user = current_user()
+    where = []
+    params = []
+
+    # Filters from query string
+    status   = request.args.get("status")
+    priority = request.args.get("priority")
+    category = request.args.get("category")
+    assignee = request.args.get("assigned_to")
+    search   = request.args.get("q")
+    overdue  = request.args.get("overdue") == "1"
+
+    if not _user_can_see_all_cases(user):
+        where.append("c.assigned_to = %s")
+        params.append(user["user_id"])
+    if status:
+        where.append("c.status = %s"); params.append(status)
+    if priority:
+        where.append("c.priority = %s"); params.append(priority)
+    if category:
+        where.append("c.category = %s"); params.append(category)
+    if assignee:
+        where.append("c.assigned_to = %s"); params.append(assignee)
+    if search:
+        where.append("(c.title LIKE %s OR c.case_code LIKE %s)")
+        params += [f"%{search}%", f"%{search}%"]
+    if overdue:
+        where.append("c.status NOT IN ('Completed')")
+        where.append("c.due_date IS NOT NULL")
+        where.append("c.due_date < %s"); params.append(date.today().isoformat())
+
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+    sql = f"""SELECT c.case_id, c.case_code, c.title, c.category, c.priority,
+                     c.status, c.due_date, c.next_action_date, c.completion_date,
+                     c.assigned_to, ua.name AS assigned_to_name,
+                     c.created_at, c.updated_at
+              FROM cases c
+              LEFT JOIN users ua ON ua.user_id = c.assigned_to
+              {where_sql}
+              ORDER BY c.created_at DESC"""
+    rows = db.fetch_all(sql, params)
+    # Compute is_overdue on the fly
+    today = date.today().isoformat()
+    for r in rows:
+        r["is_overdue"] = (
+            r["due_date"] and r["status"] != "Completed" and r["due_date"] < today
+        )
+    return jsonify({"cases": rows, "count": len(rows)})
+
+
+# ---------------------------------------------------------------------------
+# POST /api/cases  - create
+# ---------------------------------------------------------------------------
+@cases_bp.route("", methods=["POST"])
+@require_auth
+def create_case():
+    user = current_user()
+    data = request.get_json(force=True) or {}
+
+    title       = (data.get("title") or "").strip()
+    category    = (data.get("category") or "").strip()
+    description = (data.get("description") or "").strip()
+    priority    = data.get("priority") or "Medium"
+    assigned_to = data.get("assigned_to") or None
+    due_date    = data.get("due_date") or None
+    next_action_date = data.get("next_action_date") or None
+    next_action       = (data.get("next_action") or "").strip() or None
+
+    if not title:
+        return jsonify({"error": "Title is required"}), 400
+    if category not in VALID_CATEGORIES:
+        return jsonify({"error": "Invalid category"}), 400
+    if priority not in VALID_PRIORITIES:
+        return jsonify({"error": "Invalid priority"}), 400
+    if assigned_to is not None:
+        au = db.fetch_one("SELECT user_id FROM users WHERE user_id=%s", (assigned_to,))
+        if not au:
+            return jsonify({"error": "Invalid assignee"}), 400
+
+    case_code = _next_case_code()
+    assigned_by = user["user_id"]
+    cid, _ = db.execute(
+        """INSERT INTO cases
+           (case_code, title, category, description, priority, status,
+            created_by, assigned_to, due_date, next_action_date, next_action)
+           VALUES (%s,%s,%s,%s,%s,'New',%s,%s,%s,%s,%s)""",
+        (case_code, title, category, description, priority,
+         assigned_by, assigned_to, due_date, next_action_date, next_action),
+    )
+
+    # Initial assignment record
+    if assigned_to:
+        db.execute(
+            """INSERT INTO case_assignments (case_id, assigned_to, assigned_by, note)
+               VALUES (%s,%s,%s,%s)""",
+            (cid, assigned_to, assigned_by, "Initial assignment at case creation"),
+        )
+        assignee_name = db.fetch_one("SELECT name FROM users WHERE user_id=%s",
+                                      (assigned_to,))["name"]
+        activity.log_action(
+            cid, user["user_id"], "case_created",
+            f"Case {case_code} created and assigned to {assignee_name}.",
+            None, "New")
+    else:
+        activity.log_action(
+            cid, user["user_id"], "case_created",
+            f"Case {case_code} created (unassigned).",
+            None, "New")
+
+    return jsonify({"case": _case_row(cid)}), 201
+
+
+# ---------------------------------------------------------------------------
+# GET /api/cases/<id>  - detail
+# ---------------------------------------------------------------------------
+@cases_bp.route("/<int:case_id>", methods=["GET"])
+@require_auth
+def get_case(case_id):
+    user = current_user()
+    case = _case_row(case_id)
+    if not case:
+        return jsonify({"error": "Case not found"}), 404
+    if not _user_can_see_all_cases(user) and case["assigned_to"] != user["user_id"]:
+        return jsonify({"error": "Forbidden"}), 403
+    return jsonify({"case": case})
+
+
+# ---------------------------------------------------------------------------
+# PUT /api/cases/<id>  - edit details / assign / priority / status
+# ---------------------------------------------------------------------------
+@cases_bp.route("/<int:case_id>", methods=["PUT"])
+@require_auth
+def update_case(case_id):
+    user = current_user()
+    case = _case_row(case_id)
+    if not case:
+        return jsonify({"error": "Case not found"}), 404
+    # Resources can only edit cases assigned to them
+    if not _user_can_see_all_cases(user) and case["assigned_to"] != user["user_id"]:
+        return jsonify({"error": "Forbidden"}), 403
+
+    data = request.get_json(force=True) or {}
+    changes = []
+
+    # Editable text fields
+    for field in ("title", "category", "description", "next_action"):
+        if field in data:
+            new = (data.get(field) or "").strip() if field != "description" else (data.get(field) or "")
+            old = case[field]
+            if new != old:
+                if field == "category" and new not in VALID_CATEGORIES:
+                    return jsonify({"error": "Invalid category"}), 400
+                db.execute(f"UPDATE cases SET {field}=%s WHERE case_id=%s",
+                           (new, case_id))
+                activity.log_action(case_id, user["user_id"], "case_updated",
+                                    f"{field.replace('_',' ').title()} updated.",
+                                    old, new)
+                changes.append(field)
+
+    # Date fields
+    for field in ("due_date", "next_action_date"):
+        if field in data:
+            new = data.get(field) or None
+            old = case[field]
+            if new != old:
+                db.execute(f"UPDATE cases SET {field}=%s WHERE case_id=%s",
+                           (new, case_id))
+                activity.log_action(case_id, user["user_id"], "case_updated",
+                                    f"{field.replace('_',' ').title()} updated.",
+                                    old, new)
+                changes.append(field)
+
+    # Priority
+    if "priority" in data:
+        new = data["priority"]
+        if new not in VALID_PRIORITIES:
+            return jsonify({"error": "Invalid priority"}), 400
+        old = case["priority"]
+        if new != old:
+            db.execute("UPDATE cases SET priority=%s WHERE case_id=%s",
+                       (new, case_id))
+            activity.log_action(case_id, user["user_id"], "priority_updated",
+                                f"Priority changed from {old} to {new}.",
+                                old, new)
+            changes.append("priority")
+
+    # Assignment / reassignment
+    if "assigned_to" in data:
+        new = data["assigned_to"] or None
+        old = case["assigned_to"]
+        if new != old:
+            if new is not None:
+                au = db.fetch_one("SELECT user_id FROM users WHERE user_id=%s", (new,))
+                if not au:
+                    return jsonify({"error": "Invalid assignee"}), 400
+            old_name = (db.fetch_one("SELECT name FROM users WHERE user_id=%s", (old,))["name"]
+                        if old else "Unassigned")
+            new_name = (db.fetch_one("SELECT name FROM users WHERE user_id=%s", (new,))["name"]
+                        if new else "Unassigned")
+            db.execute("UPDATE cases SET assigned_to=%s WHERE case_id=%s",
+                       (new, case_id))
+            db.execute(
+                """INSERT INTO case_assignments (case_id, assigned_to, assigned_by, note)
+                   VALUES (%s,%s,%s,%s)""",
+                (case_id, new, user["user_id"],
+                 f"Reassigned from {old_name} to {new_name}"))
+            action_type = "case_assigned" if old is None else "case_reassigned"
+            activity.log_action(case_id, user["user_id"], action_type,
+                                f"Case reassigned from {old_name} to {new_name}.",
+                                old_name, new_name)
+            changes.append("assigned_to")
+
+    # Status change
+    if "status" in data:
+        new = data["status"]
+        if new not in VALID_STATUSES:
+            return jsonify({"error": "Invalid status"}), 400
+        old = case["status"]
+        if new != old:
+            # Business rule: cannot mark Completed without a resolution note
+            resolution_note = (data.get("resolution_note") or "").strip()
+            if new == "Completed":
+                if not resolution_note:
+                    return jsonify({"error":
+                        "A resolution note is required to mark a case Completed"}), 400
+                db.execute(
+                    """UPDATE cases SET status=%s, completion_date=%s,
+                       resolution_note=%s WHERE case_id=%s""",
+                    (new, date.today().isoformat(), resolution_note, case_id))
+                activity.log_action(case_id, user["user_id"], "resolution_submitted",
+                                    f"Resolution note submitted. Case closed.",
+                                    old, new)
+                activity.log_action(case_id, user["user_id"], "status_changed",
+                                    f"Status changed from {old} to {new}.",
+                                    old, new)
+            elif new == "Reopened":
+                # Reopening preserves prior completion history (we don't wipe
+                # completion_date/resolution_note - they remain visible in the
+                # history log). We just clear completion_date on the case row.
+                db.execute(
+                    "UPDATE cases SET status=%s, completion_date=NULL WHERE case_id=%s",
+                    (new, case_id))
+                activity.log_action(case_id, user["user_id"], "case_reopened",
+                                    f"Case reopened from {old}. Prior completion preserved.",
+                                    old, new)
+            else:
+                db.execute("UPDATE cases SET status=%s WHERE case_id=%s",
+                           (new, case_id))
+                activity.log_action(case_id, user["user_id"], "status_changed",
+                                    f"Status changed from {old} to {new}.",
+                                    old, new)
+            changes.append("status")
+
+    db.execute("UPDATE cases SET updated_at=%s WHERE case_id=%s",
+               (date.today().isoformat(), case_id))
+
+    return jsonify({"case": _case_row(case_id), "changed": changes})
+
+
+# ---------------------------------------------------------------------------
+# POST /api/cases/<id>/actions  - add a comment / log a manual action
+# ---------------------------------------------------------------------------
+@cases_bp.route("/<int:case_id>/actions", methods=["POST"])
+@require_auth
+def add_action(case_id):
+    user = current_user()
+    case = _case_row(case_id)
+    if not case:
+        return jsonify({"error": "Case not found"}), 404
+    if not _user_can_see_all_cases(user) and case["assigned_to"] != user["user_id"]:
+        return jsonify({"error": "Forbidden"}), 403
+
+    data = request.get_json(force=True) or {}
+    action_type = (data.get("action_type") or "comment_added").strip()
+    description = (data.get("description") or "").strip()
+    previous_value = data.get("previous_value")
+    new_value = data.get("new_value")
+    if not description:
+        return jsonify({"error": "Description is required"}), 400
+
+    # Optional: schedule a next action in the same request
+    next_action_date = data.get("next_action_date")
+    next_action      = (data.get("next_action") or "").strip()
+    if next_action_date or next_action:
+        db.execute(
+            "UPDATE cases SET next_action_date=%s, next_action=%s WHERE case_id=%s",
+            (next_action_date, next_action or None, case_id))
+        activity.log_action(case_id, user["user_id"], "next_action_scheduled",
+                            f"Next action scheduled: {next_action or '(date only)'} "
+                            f"for {next_action_date or 'N/A'}.",
+                            None, next_action_date or next_action)
+
+    aid = activity.log_action(case_id, user["user_id"], action_type,
+                              description, previous_value, new_value)
+    db.execute("UPDATE cases SET updated_at=%s WHERE case_id=%s",
+               (date.today().isoformat(), case_id))
+    return jsonify({"action_id": aid}), 201
+
+
+# ---------------------------------------------------------------------------
+# GET /api/cases/<id>/history  - assignments + actions (full timeline)
+# ---------------------------------------------------------------------------
+@cases_bp.route("/<int:case_id>/history", methods=["GET"])
+@require_auth
+def case_history(case_id):
+    user = current_user()
+    case = _case_row(case_id)
+    if not case:
+        return jsonify({"error": "Case not found"}), 404
+    if not _user_can_see_all_cases(user) and case["assigned_to"] != user["user_id"]:
+        return jsonify({"error": "Forbidden"}), 403
+
+    assignments = db.fetch_all(
+        """SELECT a.assignment_id, a.case_id, a.assigned_to, a.assigned_by,
+                  a.assigned_at, a.note,
+                  ut.name AS assigned_to_name, ub.name AS assigned_by_name
+           FROM case_assignments a
+           LEFT JOIN users ut ON ut.user_id = a.assigned_to
+           LEFT JOIN users ub ON ub.user_id = a.assigned_by
+           WHERE a.case_id = %s
+           ORDER BY a.assigned_at ASC""", (case_id,))
+
+    actions = db.fetch_all(
+        """SELECT ac.action_id, ac.case_id, ac.user_id, ac.action_type,
+                  ac.description, ac.previous_value, ac.new_value, ac.created_at,
+                  u.name AS user_name
+           FROM case_actions ac
+           LEFT JOIN users u ON u.user_id = ac.user_id
+           WHERE ac.case_id = %s
+           ORDER BY ac.created_at ASC, ac.action_id ASC""", (case_id,))
+
+    return jsonify({
+        "case": case,
+        "assignments": assignments,
+        "actions": actions,
+        "summary": {
+            "assignments_count": len(assignments),
+            "actions_count": len(actions),
+        },
+    })
