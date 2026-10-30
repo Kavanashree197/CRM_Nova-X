@@ -47,17 +47,48 @@
 ## B. Case Creation
 
 `POST /api/cases` accepts: title, category (from `categories` table),
-description, priority (Low/Medium/High/Critical), creator (from token),
-assigned resource, due date, next action, status. Returns the new case with:
+description, creator (from token), assigned resource, due date, next action,
+status. **Priority is NOT accepted from the client** — it is automatically
+derived from the selected category's `default_priority` (see below).
+Returns the new case with:
 - **Unique Case ID** — `CASE-001`, `CASE-002`, … derived from
   `MAX(case_id)+1`. **Never reused** (the seed `DELETE` only runs on
   re-seed, not on every create).
 - **Creation date** — backend `CURRENT_TIMESTAMP`.
+
+### Automatic category-based priority (Round 3 addition)
+
+The user does not choose priority. The backend is the source of truth:
+
+| Category | Auto priority |
+|---|---|
+| Compliance | Critical |
+| Billing, Technical Support, Bug Report | High |
+| Account Access, Data Migration | Medium |
+| Onboarding, Feature Request | Low |
+
+Implementation:
+- `categories.default_priority` column stores the mapping.
+- `POST /api/cases` looks up the category's `default_priority` and saves
+  it; any client-supplied `priority` field is **silently ignored** (verified:
+  sending `priority=Low` for Compliance still saves `Critical`).
+- `PUT /api/cases/{id}` with a new `category` automatically recomputes
+  priority from the new category (logs a `priority_auto_changed` audit
+  entry).
+- `migrate_priorities.py` re-aligns any existing cases to the mapping
+  (idempotent, preserves all history, logs each change to `audit_logs`).
+- The Create Case form shows priority as a read-only `PriorityBadge` that
+  updates when the category changes; placeholder "Select a category to
+  determine priority." when none selected.
+
+**Test evidence (live):** created one case per category → all 8 came back
+with the correct priority; client-supplied priority was ignored; changing
+Billing(High)→Onboarding auto-updated priority to Low.
 - **Status** — defaults to `New`.
 
-**Evidence:** created `CASE-001` "Customer refund not received" and
-`CASE-002` "SSO login loop"; both appear in `/api/cases` with correct
-fields; case codes are sequential and unique.
+**Evidence:** the 8 test cases (one per category) were created via the live
+API; all returned with the correct auto-assigned priority matching the
+mapping above. Case codes are sequential and unique.
 
 ---
 
