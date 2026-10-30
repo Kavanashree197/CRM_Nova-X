@@ -6,6 +6,7 @@ import KpiCard from '../components/KpiCard'
 import { StatusBadge, PriorityBadge, OverdueTag } from '../components/Badge'
 import { Loading, EmptyState } from '../components/Feedback'
 import CaseDetailDrawer from '../components/CaseDetailDrawer'
+import AvailabilityControl from '../components/AvailabilityControl'
 import {
   ResponsiveContainer, BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, Area, AreaChart,
@@ -50,6 +51,9 @@ export default function Overview() {
         </div>
         <button className="btn" onClick={load}><IconRefresh size={16} /> Refresh</button>
       </div>
+
+      {/* Self-service availability for non-Admin users (Admin sees org-wide data instead) */}
+      <AvailabilityControl />
 
       {isEmpty && (
         <div className="card card-pad" style={{ textAlign: 'center', padding: '48px 24px' }}>

@@ -3,6 +3,7 @@ import { apiGet } from '../api'
 import { useAuth } from '../auth'
 import CaseTable from '../components/CaseTable'
 import CaseDetailDrawer from '../components/CaseDetailDrawer'
+import AvailabilityControl from '../components/AvailabilityControl'
 import { Loading } from '../components/Feedback'
 import { useNavigate } from 'react-router-dom'
 import { IconPlus } from '../components/icons'
@@ -35,10 +36,13 @@ export default function MyCases() {
       <div className="page-header">
         <div>
           <div className="page-title">My Cases</div>
-          <div className="page-sub">Your assigned workload. Click any case to record an action, add a comment, or update its status.</div>
+          <div className="page-sub">Your assigned workload and personal availability. Click any case to record an action, add a comment, or update its status.</div>
         </div>
         <button className="btn btn-primary" onClick={() => nav('/create-case')}><IconPlus size={16} /> New case</button>
       </div>
+
+      {/* Self-service availability control (hidden for Admin — they don't take cases) */}
+      <AvailabilityControl />
 
       <div className="grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
         <MiniStat label="Assigned to me" value={cases?.length ?? '—'} />

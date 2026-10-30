@@ -6,7 +6,6 @@ import { Loading, EmptyState } from '../components/Feedback'
 import { IconPlus } from '../components/icons'
 
 const ROLES = ['Admin', 'Team Lead', 'Resource']
-const AVAILABILITY = ['Available', 'Busy', 'Unavailable']
 const AVAIL_BADGE = {
   Available: 'st-Active',
   Busy: 'pri-Medium',
@@ -66,20 +65,13 @@ export default function Settings() {
     } catch (e) { toast(e.response?.data?.error || 'Failed to update skills', 'err') }
   }
 
-  const setAvailability = async (u, avail) => {
-    try {
-      await apiPut(`/api/auth/users/${u.user_id}`, { availability: avail })
-      toast(`${u.name} is now ${avail}` + (avail === 'Unavailable' ? ' — active cases re-queued for reassignment.' : ''))
-      load()
-    } catch (e) { toast(e.response?.data?.error || 'Failed to update availability', 'err') }
-  }
 
   return (
     <div>
       <div className="page-header">
         <div>
           <div className="page-title">Settings</div>
-          <div className="page-sub">Manage users, the dynamic skill catalog, and availability. Assignment is automatic — Admins do not assign cases manually.</div>
+          <div className="page-sub">Manage users, the dynamic skill catalog, and view availability. Availability is self-service — each person updates their own status from My Cases. Admin cannot change another user's availability.</div>
         </div>
         <div className="flex gap-8">
           <button className="btn" onClick={() => setShowSkillForm(s => !s)}><IconPlus size={16} /> New skill</button>
@@ -189,15 +181,14 @@ export default function Settings() {
                             : <span className="muted text-xs">— (not a Resource)</span>}
                         </td>
                         <td>
-                          {u.role === 'Resource'
-                            ? <select className="inp" style={{ height: 32, fontSize: 12, width: 130 }}
-                                value={u.availability || 'Available'}
-                                onChange={e => setAvailability(u, e.target.value)}>
-                                {AVAILABILITY.map(a => <option key={a}>{a}</option>)}
-                              </select>
-                            : <span className="muted text-xs">—</span>}
-                          {u.availability && u.availability !== 'Available' && u.role === 'Resource' && (
-                            <div style={{ marginTop: 4 }}><span className={`badge ${AVAIL_BADGE[u.availability]}`}>{u.availability}</span></div>
+                          {/* Read-only availability badge. Admin cannot change
+                              another user's availability — it's self-service. */}
+                          <span className={`badge ${AVAIL_BADGE[u.availability || 'Available']}`}>
+                            <span className="dot" style={{ background: 'currentColor' }} />
+                            {u.availability || 'Available'}
+                          </span>
+                          {u.user_id === user.user_id && u.role !== 'Admin' && (
+                            <div className="text-xs muted" style={{ marginTop: 4 }}>Use My Cases to change your own</div>
                           )}
                         </td>
                         <td>{u.active ? <span className="badge st-Active"><span className="dot" style={{ background: 'currentColor' }} />Active</span> : <span className="badge pri-Low">Inactive</span>}</td>
