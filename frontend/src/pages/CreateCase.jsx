@@ -9,18 +9,17 @@ import { IconCheck } from '../components/icons'
 export default function CreateCase() {
   const nav = useNavigate()
   const toast = useToast()
-  const [users, setUsers] = useState([])
   const [categories, setCategories] = useState([])  // [{name, default_priority}]
   const [saving, setSaving] = useState(false)
   const [createdId, setCreatedId] = useState(null)
+  const [createdCase, setCreatedCase] = useState(null)
   const [f, setF] = useState({
     title: '', category: '', description: '',
-    assigned_to: '', due_date: '', next_action_date: '', next_action: '',
+    due_date: '', next_action_date: '', next_action: '',
   })
   const [err, setErr] = useState({})
 
   useEffect(() => {
-    apiGet('/api/auth/users').then(d => setUsers(d.users || []))
     apiGet('/api/categories').then(d => {
       const cats = d.categories || []
       setCategories(cats)
@@ -48,15 +47,16 @@ export default function CreateCase() {
     if (!validate()) return
     setSaving(true)
     try {
-      // Note: priority is intentionally NOT sent — the backend derives it
-      // from the category's default_priority.
+      // priority AND assigned_to are intentionally NOT sent — the backend
+      // derives priority from the category and assigns the case automatically
+      // via the assignment engine (skills + workload + availability).
       const body = { title: f.title, category: f.category, description: f.description,
-                     assigned_to: f.assigned_to ? Number(f.assigned_to) : null,
                      due_date: f.due_date, next_action_date: f.next_action_date,
                      next_action: f.next_action }
       const d = await apiPost('/api/cases', body)
-      toast('Case created and logged to activity feed')
+      toast('Case created and automatically assigned')
       setCreatedId(d.case.case_id)
+      setCreatedCase(d.case)
     } catch (e2) {
       toast(e2.response?.data?.error || 'Failed to create case', 'err')
     } finally { setSaving(false) }
@@ -94,11 +94,11 @@ export default function CreateCase() {
             </div>
           </div>
           <div className="field">
-            <label className="lbl">Assign to resource</label>
-            <select className="inp" value={f.assigned_to} onChange={e => set('assigned_to', e.target.value)}>
-              <option value="">Leave unassigned</option>
-              {users.filter(u => u.role === 'Resource').map(u => <option key={u.user_id} value={u.user_id}>{u.name}</option>)}
-            </select>
+            <label className="lbl">Assigned to <span className="muted" style={{ fontWeight: 400 }}>(automatic)</span></label>
+            <div style={{ paddingTop: 9, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <span className="badge st-Active"><span className="dot" style={{ background: 'currentColor' }} />Automatically Assigned</span>
+              <span className="muted text-sm">System picks the best-suited employee by skills, workload &amp; availability.</span>
+            </div>
           </div>
           <div className="field">
             <label className="lbl">Due date</label>
@@ -125,9 +125,15 @@ export default function CreateCase() {
           </button>
           <button type="button" className="btn" onClick={() => nav('/all-cases')}>Cancel</button>
         </div>
-        {createdId && (
+        {createdId && createdCase && (
           <div style={{ marginTop: 16, padding: 12, borderRadius: 8, background: 'var(--st-done-bg)', border: '1px solid #A7F3D0', color: 'var(--st-done)' }}>
-            Case created successfully. <span className="tag-link" onClick={() => setCreatedId(null)}>View it →</span>
+            <div><b>Case {createdCase.case_code} created.</b></div>
+            <div style={{ marginTop: 4, fontSize: 13 }}>
+              {createdCase.assigned_to_name
+                ? (<span>Automatically assigned to <b>{createdCase.assigned_to_name}</b> · Status: {createdCase.assignment_status} · Priority: {createdCase.priority}</span>)
+                : (<span>Status: <b>Awaiting Assignment</b> — no eligible employee with matching skills is currently available.</span>)}
+            </div>
+            <div style={{ marginTop: 6 }}><span className="tag-link" onClick={() => setCreatedId(null)}>View case details →</span></div>
           </div>
         )}
       </form>

@@ -55,13 +55,14 @@ def hash_pw(pw):
 # DEFAULT SEED: users + categories only (ZERO cases)
 # ---------------------------------------------------------------------------
 def seed_users():
+    # name, email, password, role, skills (comma-separated, Resources only)
     users = [
-        ("Arjun Mehta",   "admin@crm.io",  "admin123",  "Admin"),
-        ("Priya Sharma",  "lead@crm.io",   "lead123",   "Team Lead"),
-        ("Rahul Verma",   "rahul@crm.io",  "rahul123",  "Resource"),
-        ("Sneha Iyer",    "sneha@crm.io",  "sneha123",  "Resource"),
-        ("Vikram Nair",   "vikram@crm.io", "vikram123", "Resource"),
-        ("Anita Desai",   "anita@crm.io",  "anita123",  "Resource"),
+        ("Arjun Mehta",   "admin@crm.io",  "admin123",  "Admin",    ""),
+        ("Priya Sharma",  "lead@crm.io",   "lead123",   "Team Lead", ""),
+        ("Rahul Verma",   "rahul@crm.io",  "rahul123",  "Resource",  "Technical Support,Bug Report"),
+        ("Sneha Iyer",    "sneha@crm.io",  "sneha123",  "Resource",  "Billing,Account Access"),
+        ("Vikram Nair",   "vikram@crm.io", "vikram123", "Resource",  "Compliance,Data Migration"),
+        ("Anita Desai",   "anita@crm.io",  "anita123",  "Resource",  "Onboarding,Feature Request,Technical Support"),
     ]
     db.execute("DELETE FROM audit_logs")
     db.execute("DELETE FROM case_status_history")
@@ -70,10 +71,11 @@ def seed_users():
     db.execute("DELETE FROM cases")
     db.execute("DELETE FROM users")
     ids = []
-    for name, email, pw, role in users:
+    for name, email, pw, role, skills in users:
         uid, _ = db.execute(
-            "INSERT INTO users (name, email, password_hash, role) VALUES (%s, %s, %s, %s)",
-            (name, email, hash_pw(pw), role),
+            "INSERT INTO users (name, email, password_hash, role, skills, availability) "
+            "VALUES (%s, %s, %s, %s, %s, 'Available')",
+            (name, email, hash_pw(pw), role, skills or None),
         )
         ids.append(uid)
     return ids

@@ -9,6 +9,8 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash  TEXT NOT NULL,
     role           TEXT NOT NULL DEFAULT 'Resource' CHECK (role IN ('Admin','Team Lead','Resource')),
     active         INTEGER NOT NULL DEFAULT 1,
+    skills         TEXT,                              -- comma-separated category names (Resources only)
+    availability   TEXT NOT NULL DEFAULT 'Available' CHECK (availability IN ('Available','Busy','Unavailable')),
     created_at     TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
@@ -23,6 +25,7 @@ CREATE TABLE IF NOT EXISTS cases (
     status            TEXT NOT NULL DEFAULT 'New' CHECK (status IN ('New','Active','Pending','Completed','Reopened')),
     created_by        INTEGER NOT NULL REFERENCES users(user_id),
     assigned_to       INTEGER REFERENCES users(user_id),
+    assignment_status TEXT NOT NULL DEFAULT 'Awaiting Assignment' CHECK (assignment_status IN ('Assigned','Awaiting Assignment')),
     due_date          TEXT,
     next_action_date  TEXT,
     next_action       TEXT,
@@ -36,12 +39,15 @@ CREATE INDEX IF NOT EXISTS idx_cases_assignee ON cases(assigned_to);
 CREATE INDEX IF NOT EXISTS idx_cases_due      ON cases(due_date);
 
 CREATE TABLE IF NOT EXISTS case_assignments (
-    assignment_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    case_id       INTEGER NOT NULL REFERENCES cases(case_id) ON DELETE CASCADE,
-    assigned_to   INTEGER NOT NULL REFERENCES users(user_id),
-    assigned_by   INTEGER NOT NULL REFERENCES users(user_id),
-    assigned_at   TEXT NOT NULL DEFAULT (datetime('now')),
-    note          TEXT
+    assignment_id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    case_id              INTEGER NOT NULL REFERENCES cases(case_id) ON DELETE CASCADE,
+    assigned_to          INTEGER NOT NULL REFERENCES users(user_id),
+    assigned_by           INTEGER REFERENCES users(user_id),  -- nullable: NULL = system auto-assignment
+    assigned_at           TEXT NOT NULL DEFAULT (datetime('now')),
+    note                  TEXT,
+    assignment_method     TEXT,                                -- 'Automatic' | 'Automatic Reassignment'
+    assignment_reason     TEXT,                                -- human-readable reason
+    previous_assignee_id  INTEGER REFERENCES users(user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_assign_case ON case_assignments(case_id);
 

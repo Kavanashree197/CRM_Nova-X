@@ -73,7 +73,7 @@ export default function CaseDetailDrawer({ caseId, onClose, onChanged }) {
         {tab === 'overview' && <Overview c={c} assignments={data.assignments} />}
         {tab === 'history' && <History actions={data.actions} assignments={data.assignments} status_history={data.status_history} />}
         {tab === 'edit' && (canEdit
-          ? <EditForm c={c} users={users} categories={categories} onSaved={(msg) => { toast(msg || 'Case updated'); load(); onChanged && onChanged() }} onError={m => toast(m, 'err')} />
+          ? <EditForm c={c} categories={categories} onSaved={(msg) => { toast(msg || 'Case updated'); load(); onChanged && onChanged() }} onError={m => toast(m, 'err')} />
           : <EmptyState title="You can't edit this case" sub="Only the assignee, Team Lead or Admin can edit." />)}
         {tab === 'action' && (canEdit
           ? <ActionForm c={c} users={users} onSaved={(msg) => { toast(msg || 'Action recorded'); load(); onChanged && onChanged() }} onError={m => toast(m, 'err')} />
@@ -93,12 +93,22 @@ function DrawerShell({ onClose, children }) {
 }
 
 function Overview({ c, assignments }) {
+  // The latest assignment row carries the method + reason (automatic engine).
+  const latest = assignments && assignments.length ? assignments[assignments.length - 1] : null
   return (
     <div>
       <dl className="kv">
         <dt>Category</dt><dd>{c.category}</dd>
         <dt>Created by</dt><dd>{c.created_by_name}</dd>
-        <dt>Assigned to</dt><dd>{c.assigned_to_name || 'Unassigned'}</dd>
+        <dt>Assigned to</dt><dd>{c.assigned_to_name || 'Awaiting Assignment'}</dd>
+        <dt>Assignment status</dt><dd>
+          {c.assignment_status === 'Assigned'
+            ? <span className="badge st-Active"><span className="dot" style={{ background: 'currentColor' }} />{c.assignment_status}</span>
+            : <span className="badge pri-Medium">{c.assignment_status || 'Awaiting Assignment'}</span>}
+        </dd>
+        <dt>Assignment method</dt><dd>{latest?.assignment_method || 'Automatic'}</dd>
+        <dt>Assignment reason</dt><dd style={{ maxWidth: 420 }}>{latest?.assignment_reason || '—'}</dd>
+        <dt>Assignment date</dt><dd className="mono">{latest?.assigned_at ? fmt(latest.assigned_at) : '—'}</dd>
         <dt>Due date</dt><dd className={c.is_overdue ? 'overdue-text' : ''}>{c.due_date || '—'} {c.is_overdue && <span className="text-xs">(overdue)</span>}</dd>
         <dt>Next action</dt><dd>{c.next_action || '—'}</dd>
         <dt>Next action date</dt><dd className="mono">{c.next_action_date || '—'}</dd>
@@ -201,10 +211,10 @@ function prettyType(t) {
   }[t] || t.replace(/_/g, ' ').replace(/\b\w/g, m => m.toUpperCase()))
 }
 
-function EditForm({ c, users, categories, onSaved, onError }) {
+function EditForm({ c, categories, onSaved, onError }) {
   const [f, setF] = useState({
     title: c.title, category: c.category, description: c.description || '',
-    status: c.status, assigned_to: c.assigned_to || '',
+    status: c.status,
     due_date: c.due_date || '', next_action_date: c.next_action_date || '',
     next_action: c.next_action || '', resolution_note: '',
   })
@@ -229,7 +239,8 @@ function EditForm({ c, users, categories, onSaved, onError }) {
     if (f.description !== (c.description || '')) body.description = f.description
     // priority is intentionally NOT sent — backend derives it from category
     if (f.status !== c.status) { body.status = f.status; if (f.status === 'Completed') body.resolution_note = f.resolution_note }
-    if ((f.assigned_to || null) !== (c.assigned_to || null)) body.assigned_to = f.assigned_to ? Number(f.assigned_to) : null
+    // assigned_to is intentionally NOT sent — backend rejects manual assignment (403).
+    // Changing the category triggers an automatic re-assignment on the backend.
     if (f.due_date !== (c.due_date || '')) body.due_date = f.due_date || null
     if (f.next_action_date !== (c.next_action_date || '')) body.next_action_date = f.next_action_date || null
     if (f.next_action !== (c.next_action || '')) body.next_action = f.next_action
@@ -266,11 +277,18 @@ function EditForm({ c, users, categories, onSaved, onError }) {
           </select>
         </div>
         <div className="field">
-          <label className="lbl">Assigned to</label>
-          <select className="inp" value={f.assigned_to} onChange={e => set('assigned_to', e.target.value)}>
-            <option value="">Unassigned</option>
-            {users.filter(u => u.role === 'Resource').map(u => <option key={u.user_id} value={u.user_id}>{u.name}</option>)}
-          </select>
+          <label className="lbl">Assigned to <span className="muted" style={{ fontWeight: 400 }}>(automatic)</span></label>
+          <div style={{ paddingTop: 9 }}>
+            {c.assigned_to_name
+              ? <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <span className="badge st-Active"><span className="dot" style={{ background: 'currentColor' }} />{c.assigned_to_name}</span>
+                  <span className="muted text-xs">Assignment method: {c.assignment_status === 'Assigned' ? 'Automatic' : '—'}</span>
+                </div>
+              : <span className="muted text-sm">Awaiting Assignment</span>}
+            <div className="muted text-xs" style={{ marginTop: 6, maxWidth: 320 }}>
+              Assignment is automatic and based on skills, workload &amp; availability. Changing the category re-runs the engine and may reassign the case.
+            </div>
+          </div>
         </div>
         <div className="field">
           <label className="lbl">Due date</label>

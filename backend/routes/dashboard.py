@@ -110,6 +110,18 @@ def summary():
         (today_iso, (date.today() + timedelta(days=7)).isoformat()))
 
     audit_total = db.fetch_one("SELECT COUNT(*) AS c FROM audit_logs")["c"]
+    awaiting_assignment = db.fetch_one(
+        "SELECT COUNT(*) AS c FROM cases WHERE assignment_status='Awaiting Assignment'")["c"]
+    auto_assigned_total = db.fetch_one(
+        "SELECT COUNT(*) AS c FROM cases WHERE assignment_status='Assigned'")["c"]
+    available_employees = db.fetch_all(
+        """SELECT user_id, name, skills FROM users
+           WHERE role='Resource' AND active=1 AND availability='Available'
+           ORDER BY name""")
+    unavailable_employees = db.fetch_all(
+        """SELECT user_id, name, availability FROM users
+           WHERE role='Resource' AND active=1 AND availability<>'Available'
+           ORDER BY name""")
 
     return jsonify({
         "kpis": {
@@ -120,9 +132,13 @@ def summary():
             "total_actions": actions_total,
             "total_audit_entries": audit_total,
             "is_empty": total == 0,
+            "awaiting_assignment": awaiting_assignment,
+            "auto_assigned": auto_assigned_total,
         },
         "status_distribution": status_dist,
         "workload": workload,
+        "available_employees": available_employees,
+        "unavailable_employees": unavailable_employees,
         "daily": daily,
         "weekly": weekly,
         "recent_activities": recent,

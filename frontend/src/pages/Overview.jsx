@@ -250,6 +250,49 @@ export default function Overview() {
         </div>
       </div>
 
+      {/* Automatic assignment overview */}
+      <div className="grid charts-grid mt-16">
+        <div className="card">
+          <div className="card-head"><div className="card-title">Automatic Assignment</div></div>
+          <div className="card-pad">
+            <div className="flex gap-16" style={{ marginBottom: 14 }}>
+              <div>
+                <div className="kpi-label">Auto-assigned</div>
+                <div className="kpi-value mono" style={{ fontSize: 22, color: 'var(--st-done)' }}>{k.auto_assigned ?? 0}</div>
+              </div>
+              <div>
+                <div className="kpi-label">Awaiting assignment</div>
+                <div className="kpi-value mono" style={{ fontSize: 22, color: k.awaiting_assignment ? 'var(--st-pending)' : 'var(--text)' }}>{k.awaiting_assignment ?? 0}</div>
+              </div>
+            </div>
+            <div className="text-sm muted">
+              Cases are assigned automatically by matching the case category to employee skills, then choosing the eligible employee with the lowest active workload.
+            </div>
+          </div>
+        </div>
+        <div className="card">
+          <div className="card-head"><div className="card-title">Employee Availability</div></div>
+          <div className="card-pad">
+            <div className="section-title" style={{ marginTop: 0 }}>Available ({(data.available_employees || []).length})</div>
+            {(data.available_employees || []).length === 0
+              ? <div className="muted text-sm">No available employees.</div>
+              : <div className="flex gap-8" style={{ flexWrap: 'wrap', marginBottom: 10 }}>
+                  {data.available_employees.map(e => (
+                    <span key={e.user_id} className="badge st-Active"><span className="dot" style={{ background: 'currentColor' }} />{e.name}</span>
+                  ))}
+                </div>}
+            <div className="section-title">Unavailable / Busy ({(data.unavailable_employees || []).length})</div>
+            {(data.unavailable_employees || []).length === 0
+              ? <div className="muted text-sm">All employees available.</div>
+              : <div className="flex gap-8" style={{ flexWrap: 'wrap' }}>
+                  {data.unavailable_employees.map(e => (
+                    <span key={e.user_id} className={`badge ${e.availability === 'Busy' ? 'pri-Medium' : 'pri-Critical'}`}>{e.name} · {e.availability}</span>
+                  ))}
+                </div>}
+          </div>
+        </div>
+      </div>
+
       {/* Resource workload overview */}
       <div className="card mt-16">
         <div className="card-head"><div className="card-title">Resource Workload Overview</div></div>

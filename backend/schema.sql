@@ -21,6 +21,8 @@ CREATE TABLE users (
     password_hash  VARCHAR(255)  NOT NULL,
     role           ENUM('Admin','Team Lead','Resource') NOT NULL DEFAULT 'Resource',
     active         TINYINT(1)    NOT NULL DEFAULT 1,
+    skills         VARCHAR(255)  NULL,                              -- comma-separated category names (Resources)
+    availability   ENUM('Available','Busy','Unavailable') NOT NULL DEFAULT 'Available',
     created_at     TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_users_role (role)
 ) ENGINE=InnoDB;
@@ -38,6 +40,7 @@ CREATE TABLE cases (
     status            ENUM('New','Active','Pending','Completed','Reopened') NOT NULL DEFAULT 'New',
     created_by        INT NOT NULL,
     assigned_to       INT NULL,
+    assignment_status ENUM('Assigned','Awaiting Assignment') NOT NULL DEFAULT 'Awaiting Assignment',
     due_date          DATE NULL,
     next_action_date  DATE NULL,
     next_action       VARCHAR(255) NULL,
@@ -56,15 +59,19 @@ CREATE TABLE cases (
 -- case_assignments - preserves full reassignment history
 -- ----------------------------------------------------------------------------
 CREATE TABLE case_assignments (
-    assignment_id INT AUTO_INCREMENT PRIMARY KEY,
-    case_id       INT NOT NULL,
-    assigned_to   INT NOT NULL,
-    assigned_by   INT NOT NULL,
-    assigned_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    note          VARCHAR(255) NULL,
-    CONSTRAINT fk_assign_case   FOREIGN KEY (case_id)     REFERENCES cases(case_id) ON DELETE CASCADE,
-    CONSTRAINT fk_assign_to     FOREIGN KEY (assigned_to) REFERENCES users(user_id),
-    CONSTRAINT fk_assign_by     FOREIGN KEY (assigned_by) REFERENCES users(user_id),
+    assignment_id        INT AUTO_INCREMENT PRIMARY KEY,
+    case_id              INT NOT NULL,
+    assigned_to          INT NOT NULL,
+    assigned_by           INT NULL,                  -- NULL = system auto-assignment
+    assigned_at           TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    note                  VARCHAR(255) NULL,
+    assignment_method     VARCHAR(40) NULL,         -- 'Automatic' | 'Automatic Reassignment'
+    assignment_reason     VARCHAR(500) NULL,         -- human-readable reason
+    previous_assignee_id INT NULL,
+    CONSTRAINT fk_assign_case   FOREIGN KEY (case_id)              REFERENCES cases(case_id) ON DELETE CASCADE,
+    CONSTRAINT fk_assign_to     FOREIGN KEY (assigned_to)          REFERENCES users(user_id),
+    CONSTRAINT fk_assign_by     FOREIGN KEY (assigned_by)          REFERENCES users(user_id),
+    CONSTRAINT fk_assign_prev   FOREIGN KEY (previous_assignee_id) REFERENCES users(user_id),
     INDEX idx_assign_case (case_id)
 ) ENGINE=InnoDB;
 

@@ -14,6 +14,7 @@ import database as db
 from auth import require_auth, require_role, current_user
 import activity
 import audit
+import assignment
 
 cases_bp = Blueprint("cases", __name__)
 
@@ -91,6 +92,7 @@ def list_cases():
     sql = f"""SELECT c.case_id, c.case_code, c.title, c.category, c.priority,
                      c.status, c.due_date, c.next_action_date, c.completion_date,
                      c.assigned_to, ua.name AS assigned_to_name,
+                     c.assignment_status,
                      c.created_at, c.updated_at
               FROM cases c
               LEFT JOIN users ua ON ua.user_id = c.assigned_to
@@ -121,7 +123,17 @@ def create_case():
     # Priority is NEVER read from the client. It is derived from the
     # category's default_priority (source of truth = the categories table).
     # Any client-supplied priority is silently ignored.
-    assigned_to = data.get("assigned_to") or None
+    # assigned_to is NEVER read from the client — assignment is fully automatic.
+    # Any client-supplied assigned_to is silently ignored.
+    if "assigned_to" in data or "assignee" in data:
+        # Explicit rejection so manual-assignment attempts are logged + visible.
+        audit.log_audit("case", None, "manual_assignment_rejected", user["user_id"],
+                        f"User {user['name']} ({user['role']}) attempted manual assignment "
+                        f"on case creation — rejected.",
+                        {"client_field": "assigned_to" if "assigned_to" in data else "assignee"})
+        return jsonify({"error":
+            "Manual assignment is not allowed. Cases are assigned automatically "
+            "by the system based on skills, workload and availability."}), 403
     due_date    = data.get("due_date") or None
     next_action_date = data.get("next_action_date") or None
     next_action       = (data.get("next_action") or "").strip() or None
@@ -137,48 +149,40 @@ def create_case():
     priority = cat_row["default_priority"]
     if priority not in VALID_PRIORITIES:
         priority = "Medium"  # defensive fallback
-    if assigned_to is not None:
-        au = db.fetch_one("SELECT user_id FROM users WHERE user_id=%s", (assigned_to,))
-        if not au:
-            return jsonify({"error": "Invalid assignee"}), 400
 
     case_code = _next_case_code()
-    assigned_by = user["user_id"]
+    created_by = user["user_id"]
     cid, _ = db.execute(
         """INSERT INTO cases
            (case_code, title, category, description, priority, status,
-            created_by, assigned_to, due_date, next_action_date, next_action)
-           VALUES (%s,%s,%s,%s,%s,'New',%s,%s,%s,%s,%s)""",
+            created_by, assigned_to, assignment_status, due_date,
+            next_action_date, next_action)
+           VALUES (%s,%s,%s,%s,%s,'New',%s,NULL,'Awaiting Assignment',%s,%s,%s)""",
         (case_code, title, category, description, priority,
-         assigned_by, assigned_to, due_date, next_action_date, next_action),
+         created_by, due_date, next_action_date, next_action),
     )
 
-    # Initial assignment record
-    if assigned_to:
-        db.execute(
-            """INSERT INTO case_assignments (case_id, assigned_to, assigned_by, note)
-               VALUES (%s,%s,%s,%s)""",
-            (cid, assigned_to, assigned_by, "Initial assignment at case creation"),
-        )
+    # --- Automatic assignment engine (no client input) ---
+    assigned_uid = assignment.assign_case(cid, category)
+
+    if assigned_uid:
         assignee_name = db.fetch_one("SELECT name FROM users WHERE user_id=%s",
-                                      (assigned_to,))["name"]
+                                      (assigned_uid,))["name"]
         activity.log_action(
             cid, user["user_id"], "case_created",
-            f"Case {case_code} created and assigned to {assignee_name}.",
+            f"Case {case_code} created and automatically assigned to {assignee_name}.",
             None, "New")
         audit.log_audit("case", cid, "case_created", user["user_id"],
-                        f"Case {case_code} created and assigned to {assignee_name}.",
-                        {"case_code": case_code, "assigned_to": assigned_to})
-        audit.log_audit("assignment", cid, "case_assigned", user["user_id"],
-                        f"Case {case_code} assigned to {assignee_name}.",
-                        {"assigned_to": assigned_to, "assigned_by": user["user_id"]})
+                        f"Case {case_code} created and automatically assigned to {assignee_name}.",
+                        {"case_code": case_code, "assigned_to": assigned_uid,
+                         "assignment_method": "Automatic"})
     else:
         activity.log_action(
             cid, user["user_id"], "case_created",
-            f"Case {case_code} created (unassigned).",
+            f"Case {case_code} created — Awaiting Assignment (no eligible employee).",
             None, "New")
         audit.log_audit("case", cid, "case_created", user["user_id"],
-                        f"Case {case_code} created (unassigned).",
+                        f"Case {case_code} created — Awaiting Assignment.",
                         {"case_code": case_code})
     # Formal status history: initial New state
     audit.log_status_history(cid, None, "New", user["user_id"], "Case created")
@@ -248,6 +252,20 @@ def update_case(case_id):
                                         f"Priority auto-updated from {old_pri} to {new_pri} because category changed to {new}.",
                                         {"from": old_pri, "to": new_pri, "reason": "category_change"})
                         changes.append("priority")
+                    # Re-run the assignment engine for the new category — the
+                    # previous assignee may not have the matching skill. The
+                    # previous assignment is preserved in case_assignments.
+                    prev_assignee = case["assigned_to"]
+                    db.execute(
+                        "UPDATE cases SET assigned_to=NULL, assignment_status='Awaiting Assignment' WHERE case_id=%s",
+                        (case_id,))
+                    new_uid = assignment.assign_case(case_id, new, previous_assignee_id=prev_assignee)
+                    if new_uid:
+                        nm = db.fetch_one("SELECT name FROM users WHERE user_id=%s", (new_uid,))["name"]
+                        activity.log_action(case_id, user["user_id"], "case_reassigned",
+                                            f"Case auto-reassigned to {nm} after category change to {new}.",
+                                            None, nm)
+                        changes.append("assigned_to")
                 changes.append(field)
 
     # Date fields
@@ -272,34 +290,22 @@ def update_case(case_id):
     # remains the source of truth. (No error returned — the request still
     # succeeds for the other fields, but priority is never overwritten by it.)
 
-    # Assignment / reassignment
-    if "assigned_to" in data:
-        new = data["assigned_to"] or None
-        old = case["assigned_to"]
-        if new != old:
-            if new is not None:
-                au = db.fetch_one("SELECT user_id FROM users WHERE user_id=%s", (new,))
-                if not au:
-                    return jsonify({"error": "Invalid assignee"}), 400
-            old_name = (db.fetch_one("SELECT name FROM users WHERE user_id=%s", (old,))["name"]
-                        if old else "Unassigned")
-            new_name = (db.fetch_one("SELECT name FROM users WHERE user_id=%s", (new,))["name"]
-                        if new else "Unassigned")
-            db.execute("UPDATE cases SET assigned_to=%s WHERE case_id=%s",
-                       (new, case_id))
-            db.execute(
-                """INSERT INTO case_assignments (case_id, assigned_to, assigned_by, note)
-                   VALUES (%s,%s,%s,%s)""",
-                (case_id, new, user["user_id"],
-                 f"Reassigned from {old_name} to {new_name}"))
-            action_type = "case_assigned" if old is None else "case_reassigned"
-            activity.log_action(case_id, user["user_id"], action_type,
-                                f"Case reassigned from {old_name} to {new_name}.",
-                                old_name, new_name)
-            audit.log_audit("assignment", case_id, action_type, user["user_id"],
-                            f"Case reassigned from {old_name} to {new_name}.",
-                            {"from": old, "to": new, "from_name": old_name, "to_name": new_name})
-            changes.append("assigned_to")
+    # Assignment / reassignment — fully automatic. The client cannot set
+    # assigned_to. Any attempt is rejected with 403 and logged to audit.
+    if "assigned_to" in data or "assignee" in data:
+        audit.log_audit("case", case_id, "manual_assignment_rejected", user["user_id"],
+                        f"User {user['name']} ({user['role']}) attempted manual "
+                        f"reassignment of case {case['case_code']} — rejected.",
+                        {"client_field": "assigned_to" if "assigned_to" in data else "assignee"})
+        return jsonify({"error":
+            "Manual reassignment is not allowed. Assignment is automatic and "
+            "based on skills, workload and availability. To reassign, an Admin "
+            "can change an employee's availability in Settings."}), 403
+
+    # When the category changes, the assignment engine re-runs automatically
+    # (the case may need a different skilled employee). The previous assignment
+    # is preserved in case_assignments with previous_assignee_id set.
+    # (Handled in the category-change block above — see `assignment_status`.)
 
     # Status change
     if "status" in data:
@@ -425,10 +431,13 @@ def case_history(case_id):
     assignments = db.fetch_all(
         """SELECT a.assignment_id, a.case_id, a.assigned_to, a.assigned_by,
                   a.assigned_at, a.note,
-                  ut.name AS assigned_to_name, ub.name AS assigned_by_name
+                  a.assignment_method, a.assignment_reason, a.previous_assignee_id,
+                  ut.name AS assigned_to_name, ub.name AS assigned_by_name,
+                  up.name AS previous_assignee_name
            FROM case_assignments a
            LEFT JOIN users ut ON ut.user_id = a.assigned_to
            LEFT JOIN users ub ON ub.user_id = a.assigned_by
+           LEFT JOIN users up ON up.user_id = a.previous_assignee_id
            WHERE a.case_id = %s
            ORDER BY a.assigned_at ASC""", (case_id,))
 
