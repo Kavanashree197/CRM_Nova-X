@@ -233,8 +233,12 @@ def create_case():
     next_action_date = data.get("next_action_date") or None
     next_action       = (data.get("next_action") or "").strip() or None
 
-    # Date validation: next_action_date must be on or before due_date
-    if due_date and next_action_date and next_action_date > due_date:
+    # Date validation:
+    # - Due Date is required for official case creation
+    # - Next Action Date is optional, but if provided must be ≤ Due Date
+    if not due_date:
+        return jsonify({"error": "Due date is required"}), 400
+    if next_action_date and next_action_date > due_date:
         return jsonify({"error": "Next action date must be on or before the due date"}), 400
 
     # Optional customer info (Team Lead may include when creating directly)

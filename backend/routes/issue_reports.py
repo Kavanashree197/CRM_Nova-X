@@ -196,8 +196,12 @@ def convert_to_case(report_id):
     next_action_date = data.get("next_action_date") or None
     next_action      = (data.get("next_action") or "").strip() or None
 
-    # Date validation: next_action_date <= due_date
-    if due_date and next_action_date and next_action_date > due_date:
+    # Date validation (consistent with POST /api/cases):
+    # - Due Date is required
+    # - Next Action Date is optional, but if provided must be ≤ Due Date
+    if not due_date:
+        return jsonify({"error": "Due date is required"}), 400
+    if next_action_date and next_action_date > due_date:
         return jsonify({"error": "Next action date must be on or before the due date"}), 400
 
     title = title_override or report["issue_title"]
@@ -232,7 +236,7 @@ def convert_to_case(report_id):
             created_by, due_date, next_action_date, next_action, complexity,
             customer_name, customer_email, customer_phone, contact_method,
             reported_by, issue_report_id, assignment_status)
-           VALUES (%s,%s,%s,%s,%s,'New',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'Awaiting Assignment')""",
+           VALUES (%s,%s,%s,%s,%s,'New',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'Awaiting Assignment')""",
         (case_code, title, category, report.get("description") or "",
          priority, me["user_id"], due_date, next_action_date, next_action, case_complexity,
          report["customer_name"], report.get("customer_email"),

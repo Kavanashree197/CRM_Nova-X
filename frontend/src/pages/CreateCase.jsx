@@ -104,7 +104,8 @@ export default function CreateCase() {
     if (!f.title.trim()) e.title = 'Title is required'
     if (!f.category) e.category = 'Category is required (type a title for auto-detection or select manually)'
     if (!f.complexity) e.complexity = 'Complexity is required (type a title for auto-detection or select manually)'
-    if (f.due_date && f.next_action_date && f.next_action_date > f.due_date) e.next_action_date = 'Next action date should be on or before due date'
+    if (!f.due_date) e.due_date = 'Due date is required'
+    if (f.due_date && f.next_action_date && f.next_action_date > f.due_date) e.next_action_date = 'Next action date must be on or before the due date'
     setErr(e)
     return Object.keys(e).length === 0
   }
@@ -204,8 +205,9 @@ export default function CreateCase() {
             </div>
           </div>
           <div className="field">
-            <label className="lbl">Due date</label>
-            <input type="date" className="inp" value={f.due_date} onChange={e => set('due_date', e.target.value)} />
+            <label className="lbl">Due date <span style={{ color: 'var(--overdue)' }}>*</span></label>
+            <input type="date" className={`inp ${err.due_date ? 'err' : ''}`} value={f.due_date} onChange={e => set('due_date', e.target.value)} />
+            {err.due_date && <div className="field-error">{err.due_date}</div>}
           </div>
           <div className="field">
             <label className="lbl">Next action date</label>

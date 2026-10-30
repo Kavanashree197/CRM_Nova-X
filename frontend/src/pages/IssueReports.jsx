@@ -54,15 +54,33 @@ export default function IssueReports() {
     } catch (e2) { toast(e2.response?.data?.error || 'Failed to submit report', 'err') }
   }
 
+  const [convertForm, setConvertForm] = useState(null)  // {rid, due_date, next_action_date, next_action}
+  const [convertErr, setConvertErr] = useState({})
+
   const convert = async (rid) => {
-    const due = prompt('Enter due date (YYYY-MM-DD) for the new case, or leave empty:', '')
+    // Open the inline conversion form (replaces prompt())
+    setConvertForm({ rid, due_date: '', next_action_date: '', next_action: '' })
+    setConvertErr({})
+  }
+
+  const submitConvert = async (e) => {
+    e.preventDefault()
+    const f = convertForm
+    const errs = {}
+    if (!f.due_date) errs.due_date = 'Due date is required'
+    if (f.next_action_date && f.due_date && f.next_action_date > f.due_date)
+      errs.next_action_date = 'Next action date must be on or before the due date'
+    if (Object.keys(errs).length > 0) { setConvertErr(errs); return }
+
     try {
-      const body = {}
-      if (due) body.due_date = due
-      const d = await apiPost(`/api/issue-reports/${rid}/convert`, body)
+      const body = { due_date: f.due_date }
+      if (f.next_action_date) body.next_action_date = f.next_action_date
+      if (f.next_action) body.next_action = f.next_action
+      const d = await apiPost(`/api/issue-reports/${f.rid}/convert`, body)
       toast(`Case ${d.case.case_code} created and auto-assigned to ${d.case.assigned_to_name || 'Awaiting Assignment'}`)
+      setConvertForm(null)
       load()
-    } catch (e) { toast(e.response?.data?.error || 'Failed to convert report', 'err') }
+    } catch (e2) { toast(e2.response?.data?.error || 'Failed to convert report', 'err') }
   }
 
   const reject = async (rid) => {
@@ -150,6 +168,32 @@ export default function IssueReports() {
                               <button className="btn btn-sm btn-primary" onClick={() => convert(r.report_id)}>Convert to Case</button>
                               <button className="btn btn-sm" onClick={() => reject(r.report_id)}>Reject</button>
                             </div>
+                          )}
+                          {convertForm && convertForm.rid === r.report_id && (
+                            <form onSubmit={submitConvert} style={{ marginTop: 8, padding: 10, background: 'var(--surface-2)', borderRadius: 8, border: '1px solid var(--border)' }}>
+                              <div className="text-sm" style={{ fontWeight: 600, marginBottom: 8 }}>Convert to Official Case</div>
+                              <div className="field" style={{ marginBottom: 8 }}>
+                                <label className="lbl">Due Date *</label>
+                                <input type="date" className="inp" style={{ height: 34 }} value={convertForm.due_date}
+                                  onChange={e => setConvertForm(s => ({ ...s, due_date: e.target.value }))} />
+                                {convertErr.due_date && <div className="field-error">{convertErr.due_date}</div>}
+                              </div>
+                              <div className="field" style={{ marginBottom: 8 }}>
+                                <label className="lbl">Next Action Date (optional)</label>
+                                <input type="date" className="inp" style={{ height: 34 }} value={convertForm.next_action_date}
+                                  onChange={e => setConvertForm(s => ({ ...s, next_action_date: e.target.value }))} />
+                                {convertErr.next_action_date && <div className="field-error">{convertErr.next_action_date}</div>}
+                              </div>
+                              <div className="field" style={{ marginBottom: 10 }}>
+                                <label className="lbl">Next Action (optional)</label>
+                                <input className="inp" style={{ height: 34 }} placeholder="e.g. Investigate the issue" value={convertForm.next_action}
+                                  onChange={e => setConvertForm(s => ({ ...s, next_action: e.target.value }))} />
+                              </div>
+                              <div className="flex gap-8">
+                                <button className="btn btn-sm btn-primary" type="submit">Create Case</button>
+                                <button type="button" className="btn btn-sm" onClick={() => setConvertForm(null)}>Cancel</button>
+                              </div>
+                            </form>
                           )}
                           {r.converted_case_code && (
                             <span className="tag-link" onClick={() => setOpenCaseId(r.converted_case_id)}>{r.converted_case_code} →</span>
