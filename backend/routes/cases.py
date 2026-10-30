@@ -20,10 +20,21 @@ cases_bp = Blueprint("cases", __name__)
 
 VALID_STATUSES   = ["New", "Active", "Pending", "Completed", "Reopened"]
 VALID_PRIORITIES = ["Low", "Medium", "High", "Critical"]
-VALID_CATEGORIES = [
+# Categories are validated against the `categories` table (DB-driven) so an
+# Admin can add new categories at runtime without code changes. The legacy
+# list is kept only as a fallback for tests that import this constant.
+VALID_CATEGORIES_FALLBACK = [
     "Billing", "Technical Support", "Account Access", "Onboarding",
     "Feature Request", "Bug Report", "Data Migration", "Compliance",
 ]
+
+
+def _is_valid_category(name):
+    """Validate against the categories table (dynamic)."""
+    if not name:
+        return False
+    row = db.fetch_one("SELECT category_id FROM categories WHERE name=%s", (name,))
+    return row is not None
 
 
 def _next_case_code():
@@ -140,7 +151,7 @@ def create_case():
 
     if not title:
         return jsonify({"error": "Title is required"}), 400
-    if category not in VALID_CATEGORIES:
+    if not _is_valid_category(category):
         return jsonify({"error": "Invalid category"}), 400
     # Look up the category's default_priority — the backend decides priority.
     cat_row = db.fetch_one("SELECT default_priority FROM categories WHERE name=%s", (category,))
@@ -228,7 +239,7 @@ def update_case(case_id):
             new = (data.get(field) or "").strip() if field != "description" else (data.get(field) or "")
             old = case[field]
             if new != old:
-                if field == "category" and new not in VALID_CATEGORIES:
+                if field == "category" and not _is_valid_category(new):
                     return jsonify({"error": "Invalid category"}), 400
                 db.execute(f"UPDATE cases SET {field}=%s WHERE case_id=%s",
                            (new, case_id))

@@ -91,6 +91,93 @@ def seed_categories():
 
 
 # ---------------------------------------------------------------------------
+# Skills catalog + per-category required skills + per-user skill profiles.
+# The catalog is the source of truth — adding a skill here or via the Admin
+# Settings UI makes the assignment engine recognise it immediately.
+# ---------------------------------------------------------------------------
+# Canonical skill name -> aliases (CSV). Lowercase aliases resolve to the
+# canonical name via skills.py:BUILTIN_ALIASES + the skills.aliases column.
+SKILL_CATALOG = [
+    ("Python",              "Py"),
+    ("Java",                None),
+    ("JavaScript",          "JS"),
+    ("TypeScript",          "TS"),
+    ("SQL",                 None),
+    ("Artificial Intelligence", "AI,A.I."),
+    ("Machine Learning",    "ML"),
+    ("Cybersecurity",       "Cyber Security,Infosec"),
+    ("Billing Operations", None),
+    ("Account Management", None),
+    ("Customer Onboarding", None),
+    ("Product Knowledge",   None),
+    ("Compliance",          "GDPR,Legal"),
+    ("Data Engineering",    "ETL,Pipelines"),
+]
+
+# Category -> required skills (canonical names). The assignment engine only
+# assigns a case to a Resource whose user_skills include ALL of these.
+CATEGORY_REQUIRED_SKILLS = {
+    "Billing":           ["Billing Operations", "SQL"],
+    "Technical Support": ["Product Knowledge"],
+    "Account Access":    ["Account Management"],
+    "Onboarding":        ["Customer Onboarding"],
+    "Feature Request":   ["Product Knowledge"],
+    "Bug Report":        ["Product Knowledge", "Python"],
+    "Data Migration":    ["Data Engineering", "SQL"],
+    "Compliance":       ["Compliance"],
+    # "Machine Learning" is intentionally NOT a seeded category — the brief's
+    # test scenario creates an ML case dynamically. We add the skill to a
+    # user via Settings, then create a category "Machine Learning" with the
+    # required skill "Machine Learning" at demo time (or via the API).
+}
+
+# Per-Resource skill profile (canonical names). Seeds user_skills rows.
+RESOURCE_SKILLS = {
+    "rahul@crm.io":  ["Product Knowledge", "Python", "SQL"],
+    "sneha@crm.io":  ["Billing Operations", "Account Management", "SQL"],
+    "vikram@crm.io": ["Compliance", "Data Engineering", "SQL"],
+    "anita@crm.io":  ["Customer Onboarding", "Product Knowledge", "JavaScript"],
+}
+
+
+def seed_skills():
+    """Create the skills catalog + category_skills + user_skills (normalized)."""
+    db.execute("DELETE FROM user_skills")
+    db.execute("DELETE FROM category_skills")
+    db.execute("DELETE FROM skills")
+
+    # 1. Skill catalog
+    for name, aliases in SKILL_CATALOG:
+        db.execute(
+            "INSERT INTO skills (name, aliases) VALUES (%s, %s)",
+            (name, aliases))
+
+    # 2. Category required skills
+    for cat_name, skill_names in CATEGORY_REQUIRED_SKILLS.items():
+        cat = db.fetch_one("SELECT category_id FROM categories WHERE name=%s", (cat_name,))
+        if not cat:
+            continue
+        for skill_name in skill_names:
+            sk = db.fetch_one("SELECT skill_id FROM skills WHERE name=%s", (skill_name,))
+            if sk:
+                db.execute(
+                    "INSERT INTO category_skills (category_id, skill_id) VALUES (%s, %s)",
+                    (cat["category_id"], sk["skill_id"]))
+
+    # 3. Per-Resource skill profiles
+    for email, skill_names in RESOURCE_SKILLS.items():
+        u = db.fetch_one("SELECT user_id FROM users WHERE email=%s", (email,))
+        if not u:
+            continue
+        for skill_name in skill_names:
+            sk = db.fetch_one("SELECT skill_id FROM skills WHERE name=%s", (skill_name,))
+            if sk:
+                db.execute(
+                    "INSERT INTO user_skills (user_id, skill_id) VALUES (%s, %s)",
+                    (u["user_id"], sk["skill_id"]))
+
+
+# ---------------------------------------------------------------------------
 # OPTIONAL DEMO DATA — clearly labelled, never mixed with real records
 # ---------------------------------------------------------------------------
 def load_demo_data():
@@ -230,7 +317,8 @@ def main():
     print(f"[seed] backend: {config.DB_TYPE}")
     seed_users()
     seed_categories()
-    print("[seed] users + categories ready. Cases = 0. (default mode)")
+    seed_skills()
+    print("[seed] users + categories + skills catalog ready. Cases = 0. (default mode)")
 
     if args.clear_demo:
         clear_demo_data()

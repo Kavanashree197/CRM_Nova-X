@@ -3,6 +3,10 @@
 User management (skills, availability) is Admin-only and exposed under
 /api/auth/users/<id>. Changing a Resource's availability triggers the
 automatic-assignment engine to re-home any of their active cases.
+
+Skills are stored in a normalized `user_skills` junction table (see
+backend/skills.py). The legacy `users.skills` CSV column is kept for
+backward compatibility but the assignment engine reads `user_skills`.
 """
 from flask import Blueprint, request, jsonify
 
@@ -11,10 +15,15 @@ from auth import make_token, require_auth, require_role, current_user, public_us
 import bcrypt
 import assignment
 import audit
+import skills as sk
 
 auth_bp = Blueprint("auth", __name__)
 
 VALID_AVAILABILITY = ["Available", "Busy", "Unavailable"]
+
+
+def _user_skill_names(user_id):
+    return [r["name"] for r in sk.user_skills(user_id)]
 
 
 @auth_bp.route("/login", methods=["POST"])
@@ -49,11 +58,14 @@ def me():
 @require_auth
 def list_users():
     """Anyone logged in can see the user list with skills + availability
-    (needed for Settings + dashboards). Password hashes are stripped."""
+    (needed for Settings + dashboards). Password hashes are stripped.
+    Skills come from the normalized user_skills junction table."""
     rows = db.fetch_all(
-        "SELECT user_id, name, email, role, active, skills, availability "
+        "SELECT user_id, name, email, role, active, availability "
         "FROM users ORDER BY name"
     )
+    for r in rows:
+        r["skills"] = _user_skill_names(r["user_id"])
     return jsonify({"users": rows})
 
 
@@ -78,6 +90,9 @@ def create_user():
         "VALUES (%s,%s,%s,%s,'Available')",
         (name, email, pw_hash, role),
     )
+    # Optional initial skills (list of names) — resolved through the catalog
+    if "skills" in data and isinstance(data["skills"], list):
+        sk.set_user_skills(uid, data["skills"])
     user = db.fetch_one("SELECT * FROM users WHERE user_id=%s", (uid,))
     return jsonify({"user": public_user_dict(user)}), 201
 
@@ -96,14 +111,17 @@ def update_user(user_id):
 
     changes = []
 
-    # Skills (comma-separated category names; only meaningful for Resources)
+    # Skills (list of names) — written to the normalized user_skills table.
     if "skills" in data:
-        skills = (data.get("skills") or "").strip()
-        db.execute("UPDATE users SET skills=%s WHERE user_id=%s",
-                   (skills or None, user_id))
+        skill_names = data.get("skills")
+        if skill_names is None:
+            skill_names = []
+        if not isinstance(skill_names, list):
+            return jsonify({"error": "skills must be a list of strings"}), 400
+        stored = sk.set_user_skills(user_id, skill_names)
         audit.log_audit("user", user_id, "skills_updated", me["user_id"],
-                        f"Skills for {target['name']} updated to '{skills or '(none)'}'.",
-                        {"skills": skills})
+                        f"Skills for {target['name']} updated to {stored or '(none)'}.",
+                        {"skills": stored})
         changes.append("skills")
 
     # Availability — Available / Busy / Unavailable
@@ -149,6 +167,7 @@ def update_user(user_id):
         changes.append("active")
 
     updated = db.fetch_one(
-        "SELECT user_id, name, email, role, active, skills, availability FROM users WHERE user_id=%s",
+        "SELECT user_id, name, email, role, active, availability FROM users WHERE user_id=%s",
         (user_id,))
+    updated["skills"] = _user_skill_names(user_id)
     return jsonify({"user": updated, "changed": changes})

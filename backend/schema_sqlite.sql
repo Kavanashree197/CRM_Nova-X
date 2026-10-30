@@ -93,6 +93,44 @@ CREATE TABLE IF NOT EXISTS categories (
 );
 
 -- ----------------------------------------------------------------------------
+-- skills - normalized skill catalog (e.g. Python, Java, AI, Machine Learning,
+-- Cybersecurity, SQL). Aliases are stored as a comma-separated list and
+-- normalized at insert time so "AI", "Artificial Intelligence", and "ai"
+-- all resolve to the same skill row.
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS skills (
+    skill_id    INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL UNIQUE,        -- canonical name, e.g. "Artificial Intelligence"
+    aliases     TEXT,                        -- CSV of aliases, e.g. "AI,A.I."
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- ----------------------------------------------------------------------------
+-- user_skills - many-to-many between users and skills (dynamic skill profile).
+-- This is what the assignment engine reads. Adding a skill to an employee
+-- here makes them immediately eligible for matching cases — no code change.
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS user_skills (
+    user_id     INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    skill_id    INTEGER NOT NULL REFERENCES skills(skill_id) ON DELETE CASCADE,
+    added_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, skill_id)
+);
+CREATE INDEX IF NOT EXISTS idx_user_skills_skill ON user_skills(skill_id);
+
+-- ----------------------------------------------------------------------------
+-- category_skills - the skills a case of a given category requires. The
+-- assignment engine matches these against user_skills. Adding a required
+-- skill to a category is a data change, not a code change.
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS category_skills (
+    category_id INTEGER NOT NULL REFERENCES categories(category_id) ON DELETE CASCADE,
+    skill_id    INTEGER NOT NULL REFERENCES skills(skill_id) ON DELETE CASCADE,
+    PRIMARY KEY (category_id, skill_id)
+);
+CREATE INDEX IF NOT EXISTS idx_cat_skills_skill ON category_skills(skill_id);
+
+-- ----------------------------------------------------------------------------
 -- audit_logs - system-level audit trail for every meaningful entity change
 -- (distinct from case_actions, which is the employee activity feed)
 -- ----------------------------------------------------------------------------

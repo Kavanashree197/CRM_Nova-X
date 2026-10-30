@@ -7,8 +7,6 @@ import { IconPlus } from '../components/icons'
 
 const ROLES = ['Admin', 'Team Lead', 'Resource']
 const AVAILABILITY = ['Available', 'Busy', 'Unavailable']
-// Skills are the same set as the category list (the engine matches a Resource's
-// skills against the case category). Loaded from /api/categories.
 const AVAIL_BADGE = {
   Available: 'st-Active',
   Busy: 'pri-Medium',
@@ -19,13 +17,15 @@ export default function Settings() {
   const { user } = useAuth()
   const toast = useToast()
   const [users, setUsers] = useState(null)
-  const [categories, setCategories] = useState([])
-  const [showForm, setShowForm] = useState(false)
+  const [skillCatalog, setSkillCatalog] = useState([])   // [{skill_id, name, aliases}]
+  const [showUserForm, setShowUserForm] = useState(false)
+  const [showSkillForm, setShowSkillForm] = useState(false)
   const [f, setF] = useState({ name: '', email: '', password: '', role: 'Resource' })
+  const [newSkill, setNewSkill] = useState({ name: '', aliases: '' })
 
   const load = useCallback(() => {
     apiGet('/api/auth/users').then(d => setUsers(d.users || [])).catch(() => setUsers([]))
-    apiGet('/api/categories').then(d => setCategories((d.categories || []).map(c => c.name)))
+    apiGet('/api/skills').then(d => setSkillCatalog(d.skills || []))
   }, [])
   useEffect(() => { load() }, [load])
 
@@ -36,18 +36,31 @@ export default function Settings() {
       await apiPost('/api/auth/users', f)
       toast('User created')
       setF({ name: '', email: '', password: '', role: 'Resource' })
-      setShowForm(false)
+      setShowUserForm(false)
       load()
     } catch (e2) { toast(e2.response?.data?.error || 'Failed to create user', 'err') }
   }
 
-  // Toggle a skill in a user's skill list, then PUT to backend
-  const toggleSkill = async (u, skill) => {
-    const current = (u.skills || '').split(',').map(s => s.trim()).filter(Boolean)
-    const next = current.includes(skill) ? current.filter(s => s !== skill) : [...current, skill]
-    const skillsCsv = next.join(',')
+  const createSkill = async (e) => {
+    e.preventDefault()
+    if (!newSkill.name) { toast('Skill name is required', 'err'); return }
     try {
-      await apiPut(`/api/auth/users/${u.user_id}`, { skills: skillsCsv })
+      await apiPost('/api/skills', newSkill)
+      toast(`Skill '${newSkill.name}' added to catalog`)
+      setNewSkill({ name: '', aliases: '' })
+      setShowSkillForm(false)
+      load()
+    } catch (e2) { toast(e2.response?.data?.error || 'Failed to create skill', 'err') }
+  }
+
+  // Toggle a skill in a user's skill set, then PUT to backend (list of names)
+  const toggleSkill = async (u, skillName) => {
+    const current = Array.isArray(u.skills) ? u.skills : []
+    const next = current.includes(skillName)
+      ? current.filter(s => s !== skillName)
+      : [...current, skillName]
+    try {
+      await apiPut(`/api/auth/users/${u.user_id}`, { skills: next })
       toast(`Skills updated for ${u.name}`)
       load()
     } catch (e) { toast(e.response?.data?.error || 'Failed to update skills', 'err') }
@@ -66,9 +79,12 @@ export default function Settings() {
       <div className="page-header">
         <div>
           <div className="page-title">Settings</div>
-          <div className="page-sub">Manage users, skills and availability. Assignment is automatic — Admins do not assign cases manually.</div>
+          <div className="page-sub">Manage users, the dynamic skill catalog, and availability. Assignment is automatic — Admins do not assign cases manually.</div>
         </div>
-        <button className="btn btn-primary" onClick={() => setShowForm(s => !s)}><IconPlus size={16} /> New user</button>
+        <div className="flex gap-8">
+          <button className="btn" onClick={() => setShowSkillForm(s => !s)}><IconPlus size={16} /> New skill</button>
+          <button className="btn btn-primary" onClick={() => setShowUserForm(s => !s)}><IconPlus size={16} /> New user</button>
+        </div>
       </div>
 
       <div className="card card-pad" style={{ maxWidth: 720, marginBottom: 16 }}>
@@ -82,7 +98,24 @@ export default function Settings() {
         </div>
       </div>
 
-      {showForm && (
+      {showSkillForm && (
+        <form className="card card-pad" style={{ maxWidth: 640, marginBottom: 16 }} onSubmit={createSkill}>
+          <div className="section-title" style={{ marginTop: 0 }}>Add a new skill to the catalog</div>
+          <div className="text-sm muted" style={{ marginBottom: 10 }}>
+            Skills are normalized. Aliases (CSV) are matched case-insensitively — e.g. adding alias <code>AI</code> resolves to <b>Artificial Intelligence</b> if it exists.
+          </div>
+          <div className="form-grid">
+            <div className="field"><label className="lbl">Skill name</label><input className="inp" value={newSkill.name} onChange={e => setNewSkill(s => ({ ...s, name: e.target.value }))} placeholder="e.g. Kubernetes" /></div>
+            <div className="field"><label className="lbl">Aliases (comma-separated)</label><input className="inp" value={newSkill.aliases} onChange={e => setNewSkill(s => ({ ...s, aliases: e.target.value }))} placeholder="e.g. k8s" /></div>
+          </div>
+          <div className="flex gap-8" style={{ marginTop: 14 }}>
+            <button className="btn btn-primary" type="submit">Add skill</button>
+            <button type="button" className="btn" onClick={() => setShowSkillForm(false)}>Cancel</button>
+          </div>
+        </form>
+      )}
+
+      {showUserForm && (
         <form className="card card-pad" style={{ maxWidth: 640, marginBottom: 16 }} onSubmit={submit}>
           <div className="section-title" style={{ marginTop: 0 }}>Create new user</div>
           <div className="form-grid">
@@ -93,12 +126,27 @@ export default function Settings() {
           </div>
           <div className="flex gap-8" style={{ marginTop: 14 }}>
             <button className="btn btn-primary" type="submit">Create user</button>
-            <button type="button" className="btn" onClick={() => setShowForm(false)}>Cancel</button>
+            <button type="button" className="btn" onClick={() => setShowUserForm(false)}>Cancel</button>
           </div>
         </form>
       )}
 
       <div className="card">
+        <div className="card-head">
+          <div className="card-title">Skill catalog ({skillCatalog.length})</div>
+          <div className="card-link">Click a skill chip on a user to add/remove</div>
+        </div>
+        {!skillCatalog.length ? <div className="loading">No skills yet</div>
+          : <div className="card-pad" style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {skillCatalog.map(s => (
+                <span key={s.skill_id} className="chip active" style={{ fontSize: 12 }} title={s.aliases ? `aliases: ${s.aliases}` : ''}>
+                  {s.name}{s.aliases ? <span className="muted" style={{ marginLeft: 6 }}>({s.aliases})</span> : null}
+                </span>
+              ))}
+            </div>}
+      </div>
+
+      <div className="card mt-16">
         <div className="card-head">
           <div className="card-title">Users ({users?.length || 0}) — skills &amp; availability</div>
           <div className="card-link">Assignment is automatic</div>
@@ -107,10 +155,10 @@ export default function Settings() {
           : users.length === 0 ? <EmptyState title="No users" />
           : <div className="table-wrap">
               <table className="tbl">
-                <thead><tr><th>Name</th><th>Role</th><th>Skills (categories)</th><th>Availability</th><th>Status</th></tr></thead>
+                <thead><tr><th>Name</th><th>Role</th><th>Skills (click to toggle)</th><th>Availability</th><th>Status</th></tr></thead>
                 <tbody>
                   {users.map(u => {
-                    const userSkills = (u.skills || '').split(',').map(s => s.trim()).filter(Boolean)
+                    const userSkills = Array.isArray(u.skills) ? u.skills : []
                     return (
                       <tr key={u.user_id}>
                         <td>
@@ -124,16 +172,16 @@ export default function Settings() {
                         <td><span className={`role-pill ${u.role === 'Admin' ? 'admin' : u.role === 'Team Lead' ? 'lead' : ''}`}>{u.role}</span></td>
                         <td>
                           {u.role === 'Resource'
-                            ? <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, maxWidth: 320 }}>
-                                {categories.map(cat => {
-                                  const on = userSkills.includes(cat)
+                            ? <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, maxWidth: 380 }}>
+                                {skillCatalog.map(s => {
+                                  const on = userSkills.includes(s.name)
                                   return (
-                                    <span key={cat}
+                                    <span key={s.skill_id}
                                       className={`chip ${on ? 'active' : ''}`}
                                       style={{ fontSize: 11, padding: '3px 8px' }}
-                                      onClick={() => toggleSkill(u, cat)}
-                                      title={on ? `Click to remove ${cat}` : `Click to add ${cat}`}>
-                                      {cat}{on ? ' ✓' : ''}
+                                      onClick={() => toggleSkill(u, s.name)}
+                                      title={on ? `Click to remove ${s.name} from ${u.name}` : `Click to add ${s.name} to ${u.name}`}>
+                                      {s.name}{on ? ' ✓' : ''}
                                     </span>
                                   )
                                 })}

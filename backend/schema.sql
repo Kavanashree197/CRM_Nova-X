@@ -124,6 +124,46 @@ CREATE TABLE categories (
 ) ENGINE=InnoDB;
 
 -- ----------------------------------------------------------------------------
+-- skills - normalized skill catalog (e.g. Python, Java, AI, Machine Learning,
+-- Cybersecurity, SQL). Aliases stored as CSV; normalized at insert time so
+-- "AI", "Artificial Intelligence", "ai" all resolve to the same skill row.
+-- ----------------------------------------------------------------------------
+CREATE TABLE skills (
+    skill_id    INT AUTO_INCREMENT PRIMARY KEY,
+    name        VARCHAR(80) NOT NULL UNIQUE,
+    aliases     VARCHAR(255) NULL,
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+-- ----------------------------------------------------------------------------
+-- user_skills - many-to-many between users and skills (dynamic skill profile).
+-- This is what the assignment engine reads. Adding a skill to an employee
+-- here makes them immediately eligible for matching cases — no code change.
+-- ----------------------------------------------------------------------------
+CREATE TABLE user_skills (
+    user_id     INT NOT NULL,
+    skill_id    INT NOT NULL,
+    added_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, skill_id),
+    CONSTRAINT fk_us_user FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+    CONSTRAINT fk_us_skill FOREIGN KEY (skill_id) REFERENCES skills(skill_id) ON DELETE CASCADE,
+    INDEX idx_us_skill (skill_id)
+) ENGINE=InnoDB;
+
+-- ----------------------------------------------------------------------------
+-- category_skills - the skills a case of a given category requires. The
+-- assignment engine matches these against user_skills.
+-- ----------------------------------------------------------------------------
+CREATE TABLE category_skills (
+    category_id INT NOT NULL,
+    skill_id    INT NOT NULL,
+    PRIMARY KEY (category_id, skill_id),
+    CONSTRAINT fk_cs_cat   FOREIGN KEY (category_id) REFERENCES categories(category_id) ON DELETE CASCADE,
+    CONSTRAINT fk_cs_skill FOREIGN KEY (skill_id)    REFERENCES skills(skill_id)       ON DELETE CASCADE,
+    INDEX idx_cs_skill (skill_id)
+) ENGINE=InnoDB;
+
+-- ----------------------------------------------------------------------------
 -- audit_logs - system-level audit trail for every meaningful entity change
 -- (distinct from case_actions, which is the employee activity feed)
 -- ----------------------------------------------------------------------------

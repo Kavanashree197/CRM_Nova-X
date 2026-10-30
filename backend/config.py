@@ -35,4 +35,5 @@ SQLITE_PATH = os.environ.get("SQLITE_PATH", os.path.join(os.path.dirname(__file_
 FLASK_HOST = os.environ.get("FLASK_HOST", "0.0.0.0")
 FLASK_PORT = int(os.environ.get("FLASK_PORT", "5000"))
 FLASK_DEBUG = os.environ.get("FLASK_DEBUG", "1") == "1"
-SECRET_KEY = os.environ.get("SECRET_KEY", "crm-poc-secret-change-me")
+# 32+ byte secret for HS256 (PyJWT RFC 7518 recommendation). Override in prod.
+SECRET_KEY = os.environ.get("SECRET_KEY", "crm-poc-secret-change-me-32bytes-min-2024")

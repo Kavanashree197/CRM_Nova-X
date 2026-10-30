@@ -2,7 +2,12 @@
 
 Rule-based (no AI / no external services). Factors, in priority order:
 
-  1. Skills match   — only Resources whose `skills` include the case category
+  1. Skills match   — only Resources whose `user_skills` include ALL of the
+                      category's `category_skills` (required skills). The
+                      skill catalog is normalized (aliases like AI/Artificial
+                      Intelligence resolve to one row), so adding a skill to
+                      an employee in Settings makes them immediately eligible
+                      — no code change.
   2. Availability    — only `Available` employees (Admins/Leads never get cases)
   3. Workload        — fewest active (non-Completed) assigned cases wins
   4. Round-robin     — tie broken by least-recently-assigned (oldest
@@ -19,12 +24,6 @@ import database as db
 
 
 ACTIVE_STATUSES = ("New", "Active", "Pending", "Reopened")
-
-
-def _parse_skills(skills_csv):
-    if not skills_csv:
-        return set()
-    return {s.strip() for s in skills_csv.split(",") if s.strip()}
 
 
 def _active_workload(user_id):
@@ -48,28 +47,38 @@ def pick_assignee(category):
 
     Returns None when no eligible employee is available (case stays
     'Awaiting Assignment'). Otherwise returns a dict:
-      { user_id, name, reason, method }
+      { user_id, name, reason, method, required_skills, matched_skills }
     """
-    # 1. Candidate pool: active Resources only (Admins/Leads never get cases)
+    # 1. Required skills for this category (from category_skills + skills).
+    required = db.fetch_all(
+        """SELECT s.skill_id, s.name FROM category_skills cs
+           JOIN skills s ON s.skill_id = cs.skill_id
+           JOIN categories c ON c.category_id = cs.category_id
+           WHERE c.name = %s""", (category,))
+    required_ids = {r["skill_id"] for r in required}
+    required_names = sorted(r["name"] for r in required)
+
+    # 2. Candidate pool: active Resources who are Available.
     candidates = db.fetch_all(
-        """SELECT user_id, name, skills, availability
+        """SELECT user_id, name, availability
            FROM users
            WHERE role = 'Resource' AND active = 1""")
 
-    # 2. Skills match + availability
+    # 3. Filter by availability + full skill match.
     eligible = []
     for c in candidates:
-        skills = _parse_skills(c["skills"])
-        if category not in skills:
-            continue
         if c["availability"] != "Available":
+            continue
+        user_skill_ids = {r["skill_id"] for r in db.fetch_all(
+            "SELECT skill_id FROM user_skills WHERE user_id = %s", (c["user_id"],))}
+        if required_ids and not required_ids.issubset(user_skill_ids):
             continue
         eligible.append(c)
 
     if not eligible:
         return None  # Awaiting Assignment
 
-    # 3. Workload — fewest active cases
+    # 4. Workload — fewest active cases
     weighted = []
     for c in eligible:
         weighted.append({
@@ -82,17 +91,21 @@ def pick_assignee(category):
     min_wl = min(w["workload"] for w in weighted)
     tied = [w for w in weighted if w["workload"] == min_wl]
 
-    # 4. Round-robin — least-recently-assigned (None beats any timestamp)
+    # 5. Round-robin — least-recently-assigned (None beats any timestamp)
     def sort_key(w):
-        # (0, ...) for never-assigned sorts first; (1, timestamp) after
         return (0, "") if w["last_assigned"] is None else (1, w["last_assigned"])
 
     tied.sort(key=sort_key)
     chosen = tied[0]
 
+    skills_clause = (
+        f"matches required skills ({', '.join(required_names)})"
+        if required_names else
+        f"matches category '{category}' (no specific skills required)"
+    )
     reason = (
-        f"Automatically assigned to {chosen['name']} — matches '{category}' skills, "
-        f"Available, lowest eligible active workload ({chosen['workload']} active case"
+        f"Automatically assigned to {chosen['name']} — {skills_clause}, Available, "
+        f"lowest eligible active workload ({chosen['workload']} active case"
         f"{'s' if chosen['workload'] != 1 else ''})"
         + (", least-recently-assigned (round-robin)." if len(tied) > 1 else ".")
     )
@@ -101,6 +114,7 @@ def pick_assignee(category):
         "name": chosen["name"],
         "reason": reason,
         "method": "Automatic",
+        "required_skills": required_names,
     }
 
 

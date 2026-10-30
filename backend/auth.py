@@ -1,32 +1,58 @@
-"""Lightweight token auth + role helpers.
+"""JWT authentication + role helpers.
 
-Tokens are signed with itsdangerous (ships with Flask), so the frontend just
-stores a string in localStorage and sends it as `Authorization: Bearer <token>`.
-No external auth library needed - ideal for a student-readable POC.
+Real JWT (PyJWT) signed with HS256. Tokens carry `uid`, `role`, and an `exp`
+claim (24h). Expired / invalid / missing tokens are rejected with 401.
+
+Password hashing uses bcrypt. Password hashes are never sent to the client
+(see public_user_dict). Role is read from the DB on every request — the
+frontend cannot elevate itself by editing the token.
 """
 from functools import wraps
 from flask import request, jsonify, g
-from itsdangerous import URLSafeSerializer, BadSignature
+import jwt  # PyJWT
+from datetime import datetime, timedelta, timezone
 
 import config
 import database as db
 
-_serializer = URLSafeSerializer(config.SECRET_KEY, salt="crm-auth")
+
+# HS256 secret + 24h token lifetime
+_SECRET = config.SECRET_KEY
+_TOKEN_TTL = timedelta(hours=24)
 
 
-def make_token(user_id, role):
-    return _serializer.dumps({"uid": user_id, "role": role})
+def make_token(user_id: int, role: str) -> str:
+    """Issue a signed JWT containing uid, role, iat, exp."""
+    now = datetime.now(timezone.utc)
+    payload = {
+        "uid": user_id,
+        "role": role,
+        "iat": int(now.timestamp()),
+        "exp": int((now + _TOKEN_TTL).timestamp()),
+    }
+    return jwt.encode(payload, _SECRET, algorithm="HS256")
 
 
-def read_token(token):
+def read_token(token: str):
+    """Verify signature + expiry. Returns {uid, role} or None."""
     try:
-        return _serializer.loads(token)
-    except BadSignature:
+        payload = jwt.decode(token, _SECRET, algorithms=["HS256"])
+    except jwt.ExpiredSignatureError:
+        return None  # expired
+    except jwt.InvalidTokenError:
+        return None  # malformed / bad signature
+    if "uid" not in payload or "role" not in payload:
         return None
+    return {"uid": payload["uid"], "role": payload["role"]}
 
 
 def current_user():
-    """Return the user dict for the current request, or None."""
+    """Resolve the authenticated user for this request, or None.
+
+    The token only carries uid + role; the user record (including the
+    *current* role) is always re-read from the DB so a frontend cannot
+    elevate privileges by tampering with the token.
+    """
     if getattr(g, "user", None) is not None:
         return g.user
     auth = request.headers.get("Authorization", "")
@@ -59,6 +85,8 @@ def require_role(*roles):
             user = current_user()
             if not user:
                 return jsonify({"error": "Authentication required"}), 401
+            # Role is read from the DB, not the token, so it cannot be
+            # spoofed by editing frontend data.
             if user["role"] not in roles:
                 return jsonify({"error": "Forbidden: requires role %s" % ",".join(roles)}), 403
             return fn(*args, **kwargs)
