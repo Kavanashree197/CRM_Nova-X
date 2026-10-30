@@ -215,15 +215,26 @@ def convert_to_case(report_id):
 
     # Create the official case — created_by = Team Lead, reported_by = the
     # employee who reported the issue, issue_report_id links back to the report.
+    # --- Determine complexity from the issue title + description ---
+    from routes.cases import _detect_complexity_from_text, VALID_COMPLEXITIES
+    detection = _detect_complexity_from_text(title, report.get("description") or "")
+    if detection["complexity"]:
+        case_complexity = detection["complexity"]
+    else:
+        cat_cx_row = db.fetch_one("SELECT complexity FROM categories WHERE name=%s", (category,))
+        case_complexity = cat_cx_row["complexity"] if cat_cx_row and cat_cx_row["complexity"] else "Medium"
+    if case_complexity not in VALID_COMPLEXITIES:
+        case_complexity = "Medium"
+
     cid, _ = db.execute(
         """INSERT INTO cases
            (case_code, title, category, description, priority, status,
-            created_by, due_date, next_action_date, next_action,
+            created_by, due_date, next_action_date, next_action, complexity,
             customer_name, customer_email, customer_phone, contact_method,
             reported_by, issue_report_id, assignment_status)
-           VALUES (%s,%s,%s,%s,%s,'New',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'Awaiting Assignment')""",
+           VALUES (%s,%s,%s,%s,%s,'New',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'Awaiting Assignment')""",
         (case_code, title, category, report.get("description") or "",
-         priority, me["user_id"], due_date, next_action_date, next_action,
+         priority, me["user_id"], due_date, next_action_date, next_action, case_complexity,
          report["customer_name"], report.get("customer_email"),
          report.get("customer_phone"), report["contact_method"],
          report["reported_by"], report_id))
@@ -242,8 +253,7 @@ def convert_to_case(report_id):
     audit.log_status_history(cid, None, "New", me["user_id"], "Case created from issue report")
 
     # Automatic assignment (workload + complexity based)
-    cat_cx = db.fetch_one("SELECT complexity FROM categories WHERE name=%s", (category,))
-    assigned_uid = assignment.assign_case(cid, category, complexity=cat_cx["complexity"] if cat_cx else None)
+    assigned_uid = assignment.assign_case(cid, category, complexity=case_complexity)
 
     # Update the report
     closed_at_expr = "datetime('now')" if db.config.DB_TYPE == "sqlite" else "CURRENT_TIMESTAMP"

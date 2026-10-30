@@ -9,6 +9,7 @@ In addition, every meaningful change is recorded in:
 """
 from flask import Blueprint, request, jsonify
 from datetime import date
+import re
 
 import database as db
 from auth import require_auth, require_role, current_user
@@ -20,6 +21,84 @@ cases_bp = Blueprint("cases", __name__)
 
 VALID_STATUSES   = ["New", "Active", "Pending", "Completed", "Reopened"]
 VALID_PRIORITIES = ["Low", "Medium", "High", "Critical"]
+VALID_COMPLEXITIES = ["Low", "Medium", "High"]
+
+# Keyword → complexity mapping for automatic detection. Multi-word phrases
+# are weighted higher. The detector analyses the title + description.
+COMPLEXITY_KEYWORDS = {
+    "High": [
+        "crash", "crashes", "crashed", "security", "breach", "unauthorized",
+        "suspicious", "hacked", "critical", "incident", "data loss",
+        "corruption", "outage", "down", "production", "emergency",
+        "vulnerability", "exploit", "malware", "ransomware",
+        "application crashes", "security breach", "unauthorized access",
+        "suspicious activity", "critical incident",
+    ],
+    "Medium": [
+        "payment", "invoice", "billing", "transaction", "charge", "refund",
+        "login", "log in", "password", "access", "account", "locked",
+        "reset", "error", "timeout", "slow", "broken", "not working",
+        "failed", "duplicate", "pending", "verification", "investigation",
+        "multiple failed", "order not confirmed", "payment deducted",
+        "transaction failed", "unable to log in", "cannot access",
+        "unable to access",
+    ],
+    "Low": [
+        "update", "change", "request", "information", "question",
+        "mobile number", "email address", "general", "inquiry",
+        "onboarding", "setup", "activate", "feature", "suggestion",
+        "dark mode", "update registered", "general information",
+    ],
+}
+
+
+def _detect_complexity_from_text(title, description=""):
+    """Analyse title + description and return a complexity level + confidence.
+    Uses weighted keyword matching (same approach as category detection).
+    Returns {"complexity": "Low"/"Medium"/"High" or None, "confidence": "high"/"low"/"none"}.
+    """
+    text = _normalise_text(title + " " + (description or ""))
+    if len(text.strip()) < 3:
+        return {"complexity": None, "confidence": "none"}
+
+    scores = {}
+    for level, keywords in COMPLEXITY_KEYWORDS.items():
+        score = 0
+        for kw in keywords:
+            if kw.lower() in text:
+                weight = 2 if " " in kw else 1
+                score += weight
+        if score > 0:
+            scores[level] = score
+
+    if not scores:
+        return {"complexity": None, "confidence": "none"}
+
+    best = max(scores, key=scores.get)
+    best_score = scores[best]
+    confidence = "high" if best_score >= 2 else "low"
+    return {"complexity": best, "confidence": confidence}
+
+
+def _normalise_text(text):
+    return re.sub(r"\s+", " ", (text or "").lower().strip())
+
+
+# ---------------------------------------------------------------------------
+# POST /api/cases/detect-complexity  — real-time complexity detection
+# ---------------------------------------------------------------------------
+@cases_bp.route("/detect-complexity", methods=["POST"])
+@require_auth
+def detect_complexity():
+    """Analyse a case title (+ optional description) and return the detected
+    complexity level. Used by the Create Case form for real-time display."""
+    data = request.get_json(force=True) or {}
+    title = (data.get("title") or "").strip()
+    description = (data.get("description") or "").strip()
+    result = _detect_complexity_from_text(title, description)
+    return jsonify(result)
+
+
 # Categories are validated against the `categories` table (DB-driven) so an
 # Admin can add new categories at runtime without code changes. The legacy
 # list is kept only as a fallback for tests that import this constant.
@@ -178,26 +257,39 @@ def create_case():
     if priority not in VALID_PRIORITIES:
         priority = "Medium"  # defensive fallback
 
+    # --- Determine complexity from the title + description (keyword-based) ---
+    # If the client sent a complexity, validate it; otherwise detect from text.
+    # Fallback to the category's baseline complexity if detection fails.
+    client_complexity = (data.get("complexity") or "").strip()
+    if client_complexity and client_complexity in VALID_COMPLEXITIES:
+        case_complexity = client_complexity
+    else:
+        detection = _detect_complexity_from_text(title, description)
+        if detection["complexity"]:
+            case_complexity = detection["complexity"]
+        else:
+            # Fallback to the category's baseline complexity
+            cat_cx_row = db.fetch_one("SELECT complexity FROM categories WHERE name=%s", (category,))
+            case_complexity = cat_cx_row["complexity"] if cat_cx_row and cat_cx_row["complexity"] else "Medium"
+    if case_complexity not in VALID_COMPLEXITIES:
+        case_complexity = "Medium"  # defensive fallback — never save NULL
+
     case_code = _next_case_code()
     created_by = user["user_id"]
     cid, _ = db.execute(
         """INSERT INTO cases
            (case_code, title, category, description, priority, status,
             created_by, assigned_to, assignment_status, due_date,
-            next_action_date, next_action,
+            next_action_date, next_action, complexity,
             customer_name, customer_email, customer_phone, contact_method)
-           VALUES (%s,%s,%s,%s,%s,'New',%s,NULL,'Awaiting Assignment',%s,%s,%s,%s,%s,%s,%s)""",
+           VALUES (%s,%s,%s,%s,%s,'New',%s,NULL,'Awaiting Assignment',%s,%s,%s,%s,%s,%s,%s,%s)""",
         (case_code, title, category, description, priority,
-         created_by, due_date, next_action_date, next_action,
+         created_by, due_date, next_action_date, next_action, case_complexity,
          customer_name, customer_email, customer_phone, contact_method),
     )
 
     # --- Automatic assignment engine (workload + complexity based) ---
-    # Pass the category's complexity so the engine weights the new case.
-    cat_complexity = cat_row.get("complexity") if "cat_row" in dir() else None
-    # Actually cat_row only has default_priority; fetch complexity separately
-    cat_cx = db.fetch_one("SELECT complexity FROM categories WHERE name=%s", (category,))
-    assigned_uid = assignment.assign_case(cid, category, complexity=cat_cx["complexity"] if cat_cx else None)
+    assigned_uid = assignment.assign_case(cid, category, complexity=case_complexity)
 
     if assigned_uid:
         assignee_name = db.fetch_one("SELECT name FROM users WHERE user_id=%s",

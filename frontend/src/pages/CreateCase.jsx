@@ -3,66 +3,85 @@ import { useNavigate } from 'react-router-dom'
 import { apiGet, apiPost } from '../api'
 import { useToast } from '../components/Layout'
 import CaseDetailDrawer from '../components/CaseDetailDrawer'
-import { PriorityBadge } from '../components/Badge'
+import { PriorityBadge, ComplexityBadge } from '../components/Badge'
 import { IconCheck } from '../components/icons'
+
+const COMPLEXITY_OPTIONS = ['Low', 'Medium', 'High']
 
 export default function CreateCase() {
   const nav = useNavigate()
   const toast = useToast()
-  const [categories, setCategories] = useState([])  // [{name, default_priority}]
+  const [categories, setCategories] = useState([])
   const [saving, setSaving] = useState(false)
   const [createdId, setCreatedId] = useState(null)
   const [createdCase, setCreatedCase] = useState(null)
   const [f, setF] = useState({
     title: '', category: '', description: '',
     due_date: '', next_action_date: '', next_action: '',
+    complexity: '',  // '' = auto-detect; user can override
   })
   const [err, setErr] = useState({})
   const [detected, setDetected] = useState({ category: null, priority: null, confidence: 'none' })
+  const [detectedComplexity, setDetectedComplexity] = useState({ complexity: null, confidence: 'none' })
   const [detecting, setDetecting] = useState(false)
   const [userOverrodeCategory, setUserOverrodeCategory] = useState(false)
+  const [userOverrodeComplexity, setUserOverrodeComplexity] = useState(false)
   const debounceRef = useRef(null)
 
   useEffect(() => {
     apiGet('/api/categories').then(d => {
       const cats = d.categories || []
       setCategories(cats)
-      if (cats.length && !f.category) setF(s => ({ ...s, category: '' }))
     })
-  }, []) // eslint-disable-line
+  }, [])
 
-  // Debounced category detection from the title text. Fires 400ms after the
-  // user stops typing. The backend (/api/categories/detect) does the keyword
-  // matching + returns the category + its default_priority. The category
-  // is auto-selected unless the user has manually changed it.
-  const detectCategory = useCallback(async (title) => {
+  // Debounced category + complexity detection from the title text. Both are
+  // detected in parallel — category from /api/categories/detect, complexity
+  // from /api/cases/detect-complexity. Fires 400ms after the user stops typing.
+  const detectFromTitle = useCallback(async (title, desc) => {
     if (!title || title.trim().length < 3) {
       setDetected({ category: null, priority: null, confidence: 'none' })
+      setDetectedComplexity({ complexity: null, confidence: 'none' })
       setDetecting(false)
       return
     }
     setDetecting(true)
     try {
-      const d = await apiPost('/api/categories/detect', { title })
-      setDetected(d)
-      // Auto-select the detected category unless the user manually overrode
-      if (d.category && !userOverrodeCategory) {
-        setF(s => ({ ...s, category: d.category }))
+      // Category detection
+      const catResult = await apiPost('/api/categories/detect', { title })
+      setDetected(catResult)
+      if (catResult.category && !userOverrodeCategory) {
+        setF(s => ({ ...s, category: catResult.category }))
+      }
+      // Complexity detection (uses title + description)
+      const cxResult = await apiPost('/api/cases/detect-complexity', { title, description: desc || '' })
+      setDetectedComplexity(cxResult)
+      if (cxResult.complexity && !userOverrodeComplexity) {
+        setF(s => ({ ...s, complexity: cxResult.complexity }))
       }
     } catch {
       setDetected({ category: null, priority: null, confidence: 'none' })
+      setDetectedComplexity({ complexity: null, confidence: 'none' })
     } finally {
       setDetecting(false)
     }
-  }, [userOverrodeCategory])
+  }, [userOverrodeCategory, userOverrodeComplexity])
 
   const onTitleChange = (value) => {
     setF(s => ({ ...s, title: value }))
-    // Reset the override flag so detection takes over again when the title changes
     setUserOverrodeCategory(false)
-    // Debounce the detection call (400ms)
+    setUserOverrodeComplexity(false)
     if (debounceRef.current) clearTimeout(debounceRef.current)
-    debounceRef.current = setTimeout(() => detectCategory(value), 400)
+    debounceRef.current = setTimeout(() => detectFromTitle(value, f.description), 400)
+  }
+
+  const onDescriptionChange = (value) => {
+    setF(s => ({ ...s, description: value }))
+    // Re-trigger complexity detection when description changes (it uses both)
+    if (f.title.trim().length >= 3) {
+      if (debounceRef.current) clearTimeout(debounceRef.current)
+      debounceRef.current = setTimeout(() => detectFromTitle(f.title, value), 400)
+    }
   }
 
   const onCategoryChange = (value) => {
@@ -70,12 +89,13 @@ export default function CreateCase() {
     setUserOverrodeCategory(true)
   }
 
+  const onComplexityChange = (value) => {
+    setF(s => ({ ...s, complexity: value }))
+    setUserOverrodeComplexity(true)
+  }
+
   const set = (k, v) => setF(s => ({ ...s, [k]: v }))
 
-  // Priority comes from the detected/selected category. If the detection
-  // returned a priority, use it; otherwise fall back to the category's
-  // default_priority from the categories list. The backend is still the
-  // source of truth — the client never sends a priority value.
   const selectedCat = categories.find(c => c.name === f.category)
   const autoPriority = detected.priority || selectedCat?.default_priority || null
 
@@ -83,6 +103,7 @@ export default function CreateCase() {
     const e = {}
     if (!f.title.trim()) e.title = 'Title is required'
     if (!f.category) e.category = 'Category is required (type a title for auto-detection or select manually)'
+    if (!f.complexity) e.complexity = 'Complexity is required (type a title for auto-detection or select manually)'
     if (f.due_date && f.next_action_date && f.next_action_date > f.due_date) e.next_action_date = 'Next action date should be on or before due date'
     setErr(e)
     return Object.keys(e).length === 0
@@ -95,7 +116,7 @@ export default function CreateCase() {
     try {
       const body = { title: f.title, category: f.category, description: f.description,
                      due_date: f.due_date, next_action_date: f.next_action_date,
-                     next_action: f.next_action }
+                     next_action: f.next_action, complexity: f.complexity }
       const d = await apiPost('/api/cases', body)
       toast('Case created and automatically assigned')
       setCreatedId(d.case.case_id)
@@ -110,7 +131,7 @@ export default function CreateCase() {
       <div className="page-header">
         <div>
           <div className="page-title">Create Case</div>
-          <div className="page-sub">Open a new customer case. The category is auto-detected from the title — the backend validates the final category and priority.</div>
+          <div className="page-sub">Open a new customer case. Category, priority and complexity are auto-detected from the title — the backend validates the final values.</div>
         </div>
       </div>
 
@@ -121,8 +142,7 @@ export default function CreateCase() {
             <input className={`inp ${err.title ? 'err' : ''}`} placeholder="e.g. Payment deducted but order not confirmed"
               value={f.title} onChange={e => onTitleChange(e.target.value)} />
             {err.title && <div className="field-error">{err.title}</div>}
-            {/* Detection indicator */}
-            {detecting && <div className="text-xs muted" style={{ marginTop: 4 }}><span className="spinner" style={{ width: 10, height: 10, marginRight: 4 }} />Detecting category…</div>}
+            {detecting && <div className="text-xs muted" style={{ marginTop: 4 }}><span className="spinner" style={{ width: 10, height: 10, marginRight: 4 }} />Detecting category &amp; complexity…</div>}
             {!detecting && detected.category && detected.confidence === 'high' && !userOverrodeCategory && (
               <div className="text-xs" style={{ marginTop: 4, color: 'var(--st-done)' }}>✓ Category auto-detected: <b>{detected.category}</b></div>
             )}
@@ -151,14 +171,36 @@ export default function CreateCase() {
             <div style={{ paddingTop: 9 }}>
               {autoPriority
                 ? <PriorityBadge priority={autoPriority} />
-                : <span className="muted text-sm">Type a title to auto-detect category &amp; priority.</span>}
+                : <span className="muted text-sm">Type a title to auto-detect.</span>}
             </div>
+          </div>
+          <div className="field">
+            <label className="lbl">
+              Complexity
+              {detectedComplexity.complexity && !userOverrodeComplexity && detectedComplexity.confidence !== 'none' && (
+                <span className="text-xs muted" style={{ fontWeight: 400, marginLeft: 6 }}>(auto-detected)</span>
+              )}
+              {userOverrodeComplexity && (
+                <span className="text-xs muted" style={{ fontWeight: 400, marginLeft: 6 }}>(manual)</span>
+              )}
+            </label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', paddingTop: 4 }}>
+              {f.complexity
+                ? <ComplexityBadge complexity={f.complexity} />
+                : <span className="muted text-sm">{f.title.trim().length >= 3 ? 'Complexity not detected — select manually.' : 'Type a title to auto-detect.'}</span>}
+              <select className="inp btn-sm" style={{ width: 'auto', height: 30, fontSize: 12 }}
+                value={f.complexity} onChange={e => onComplexityChange(e.target.value)}>
+                <option value="">— override —</option>
+                {COMPLEXITY_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            {err.complexity && <div className="field-error">{err.complexity}</div>}
           </div>
           <div className="field">
             <label className="lbl">Assigned to <span className="muted" style={{ fontWeight: 400 }}>(automatic)</span></label>
             <div style={{ paddingTop: 9, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <span className="badge st-Active"><span className="dot" style={{ background: 'currentColor' }} />Automatically Assigned</span>
-              <span className="muted text-sm">System picks the best-suited employee by skills, workload &amp; availability.</span>
+              <span className="muted text-sm">System assigns by workload &amp; complexity.</span>
             </div>
           </div>
           <div className="field">
@@ -177,7 +219,7 @@ export default function CreateCase() {
           <div className="field full">
             <label className="lbl">Description</label>
             <textarea className="inp" placeholder="Describe the customer issue, any context, and reproduction steps…"
-              value={f.description} onChange={e => set('description', e.target.value)} />
+              value={f.description} onChange={e => onDescriptionChange(e.target.value)} />
           </div>
         </div>
         <div className="flex gap-8" style={{ marginTop: 18 }}>
@@ -192,7 +234,7 @@ export default function CreateCase() {
             <div style={{ marginTop: 4, fontSize: 13 }}>
               {createdCase.assigned_to_name
                 ? (<span>Automatically assigned to <b>{createdCase.assigned_to_name}</b> · Status: {createdCase.assignment_status} · Priority: {createdCase.priority}</span>)
-                : (<span>Status: <b>Awaiting Assignment</b> — no eligible employee with matching skills is currently available.</span>)}
+                : (<span>Status: <b>Awaiting Assignment</b> — no Available Resource found.</span>)}
             </div>
             <div style={{ marginTop: 6 }}><span className="tag-link" onClick={() => setCreatedId(null)}>View case details →</span></div>
           </div>
