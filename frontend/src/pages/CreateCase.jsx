@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { apiGet, apiPost } from '../api'
 import { useToast } from '../components/Layout'
@@ -18,25 +18,71 @@ export default function CreateCase() {
     due_date: '', next_action_date: '', next_action: '',
   })
   const [err, setErr] = useState({})
+  const [detected, setDetected] = useState({ category: null, priority: null, confidence: 'none' })
+  const [detecting, setDetecting] = useState(false)
+  const [userOverrodeCategory, setUserOverrodeCategory] = useState(false)
+  const debounceRef = useRef(null)
 
   useEffect(() => {
     apiGet('/api/categories').then(d => {
       const cats = d.categories || []
       setCategories(cats)
-      if (cats.length && !f.category) setF(s => ({ ...s, category: cats[0].name }))
+      if (cats.length && !f.category) setF(s => ({ ...s, category: '' }))
     })
   }, []) // eslint-disable-line
 
+  // Debounced category detection from the title text. Fires 400ms after the
+  // user stops typing. The backend (/api/categories/detect) does the keyword
+  // matching + returns the category + its default_priority. The category
+  // is auto-selected unless the user has manually changed it.
+  const detectCategory = useCallback(async (title) => {
+    if (!title || title.trim().length < 3) {
+      setDetected({ category: null, priority: null, confidence: 'none' })
+      setDetecting(false)
+      return
+    }
+    setDetecting(true)
+    try {
+      const d = await apiPost('/api/categories/detect', { title })
+      setDetected(d)
+      // Auto-select the detected category unless the user manually overrode
+      if (d.category && !userOverrodeCategory) {
+        setF(s => ({ ...s, category: d.category }))
+      }
+    } catch {
+      setDetected({ category: null, priority: null, confidence: 'none' })
+    } finally {
+      setDetecting(false)
+    }
+  }, [userOverrodeCategory])
+
+  const onTitleChange = (value) => {
+    setF(s => ({ ...s, title: value }))
+    // Reset the override flag so detection takes over again when the title changes
+    setUserOverrodeCategory(false)
+    // Debounce the detection call (400ms)
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => detectCategory(value), 400)
+  }
+
+  const onCategoryChange = (value) => {
+    setF(s => ({ ...s, category: value }))
+    setUserOverrodeCategory(true)
+  }
+
   const set = (k, v) => setF(s => ({ ...s, [k]: v }))
 
-  // Priority is derived from the selected category's default_priority —
-  // the backend is the source of truth; the client never sends a priority.
+  // Priority comes from the detected/selected category. If the detection
+  // returned a priority, use it; otherwise fall back to the category's
+  // default_priority from the categories list. The backend is still the
+  // source of truth — the client never sends a priority value.
   const selectedCat = categories.find(c => c.name === f.category)
-  const autoPriority = selectedCat?.default_priority || null
+  const autoPriority = detected.priority || selectedCat?.default_priority || null
 
   const validate = () => {
     const e = {}
     if (!f.title.trim()) e.title = 'Title is required'
+    if (!f.category) e.category = 'Category is required (type a title for auto-detection or select manually)'
     if (f.due_date && f.next_action_date && f.next_action_date > f.due_date) e.next_action_date = 'Next action date should be on or before due date'
     setErr(e)
     return Object.keys(e).length === 0
@@ -47,9 +93,6 @@ export default function CreateCase() {
     if (!validate()) return
     setSaving(true)
     try {
-      // priority AND assigned_to are intentionally NOT sent — the backend
-      // derives priority from the category and assigns the case automatically
-      // via the assignment engine (skills + workload + availability).
       const body = { title: f.title, category: f.category, description: f.description,
                      due_date: f.due_date, next_action_date: f.next_action_date,
                      next_action: f.next_action }
@@ -67,7 +110,7 @@ export default function CreateCase() {
       <div className="page-header">
         <div>
           <div className="page-title">Create Case</div>
-          <div className="page-sub">Open a new customer case. Creation is logged to the activity feed automatically.</div>
+          <div className="page-sub">Open a new customer case. The category is auto-detected from the title — the backend validates the final category and priority.</div>
         </div>
       </div>
 
@@ -75,22 +118,40 @@ export default function CreateCase() {
         <div className="form-grid">
           <div className="field full">
             <label className="lbl">Case title <span style={{ color: 'var(--overdue)' }}>*</span></label>
-            <input className={`inp ${err.title ? 'err' : ''}`} placeholder="e.g. Customer cannot access billing dashboard"
-              value={f.title} onChange={e => set('title', e.target.value)} />
+            <input className={`inp ${err.title ? 'err' : ''}`} placeholder="e.g. Payment deducted but order not confirmed"
+              value={f.title} onChange={e => onTitleChange(e.target.value)} />
             {err.title && <div className="field-error">{err.title}</div>}
+            {/* Detection indicator */}
+            {detecting && <div className="text-xs muted" style={{ marginTop: 4 }}><span className="spinner" style={{ width: 10, height: 10, marginRight: 4 }} />Detecting category…</div>}
+            {!detecting && detected.category && detected.confidence === 'high' && !userOverrodeCategory && (
+              <div className="text-xs" style={{ marginTop: 4, color: 'var(--st-done)' }}>✓ Category auto-detected: <b>{detected.category}</b></div>
+            )}
+            {!detecting && detected.confidence === 'none' && f.title.trim().length >= 3 && !userOverrodeCategory && (
+              <div className="text-xs muted" style={{ marginTop: 4 }}>Category not detected — select manually below.</div>
+            )}
           </div>
           <div className="field">
-            <label className="lbl">Category</label>
-            <select className="inp" value={f.category} onChange={e => set('category', e.target.value)}>
+            <label className="lbl">
+              Category
+              {detected.category && !userOverrodeCategory && detected.confidence !== 'none' && (
+                <span className="text-xs muted" style={{ fontWeight: 400, marginLeft: 6 }}>(auto-detected)</span>
+              )}
+              {userOverrodeCategory && (
+                <span className="text-xs muted" style={{ fontWeight: 400, marginLeft: 6 }}>(manual)</span>
+              )}
+            </label>
+            <select className={`inp ${err.category ? 'err' : ''}`} value={f.category} onChange={e => onCategoryChange(e.target.value)}>
+              <option value="">— Select category —</option>
               {categories.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
             </select>
+            {err.category && <div className="field-error">{err.category}</div>}
           </div>
           <div className="field">
             <label className="lbl">Priority <span className="muted" style={{ fontWeight: 400 }}>(auto from category)</span></label>
             <div style={{ paddingTop: 9 }}>
               {autoPriority
                 ? <PriorityBadge priority={autoPriority} />
-                : <span className="muted text-sm">Select a category to determine priority.</span>}
+                : <span className="muted text-sm">Type a title to auto-detect category &amp; priority.</span>}
             </div>
           </div>
           <div className="field">
